@@ -41,9 +41,9 @@ book corpus, not novel ML research.
    stubs, Streamlit landing, schemas, chess_utils.
    *Acceptance:* `docker compose up` works, `/health` 200, Streamlit loads.
 2. **Phase 2 — Foundations.** Game fetcher (Lichess + Chess.com), URL input
-   metadata display, PDF extraction on 1 book, Module B PGN parser.
-3. **Phase 3 — Scale & Engine Source.** Extraction on top 50 books (≥5,000
-   rows). Module B diff logic. Lichess Cloud Eval client.
+   metadata display, Module B PGN parser.
+3. **Phase 3 — Scale & Engine Source.** PDF extraction pipeline (1 book →
+   top 50, ≥5,000 rows). Module B diff logic. Lichess Cloud Eval client.
 4. **Phase 4 — RAG & Wire-Up.** ChromaDB indexed. `/advise` returns valid
    `AdviseResponse` via Anthropic fallback. All three panels render.
 5. **Phase 5 — SHIP GATE.** End-to-end Lichess + Chess.com flows.
@@ -73,12 +73,17 @@ book corpus, not novel ML research.
 | Fine-tune    | Unsloth + QLoRA on Colab Pro                            |
 | Backend      | FastAPI + Uvicorn (Docker)                              |
 | UI           | Streamlit (Docker, 8501)                                |
-| Game APIs    | Lichess Open API, Chess.com Public Data                 |
+| Game APIs    | Lichess Open API, Chess.com Public Data¹                |
 | PGN          | python-chess                                            |
 | Board render | `streamlit.components.v1` + chessboard.js               |
 
 LLM inference runs on the Mac host (Apple Silicon Metal not available inside
 Docker). Everything else is Docker Compose.
+
+¹ `openingtree/openingtree` (JS/React SPA) is **read-only reference** for
+bulk-fetch URL construction patterns (Lichess filters, Chess.com archives
+walker). Not a runtime dependency. Phase 2 implements single-game fetch
+directly with `httpx`; revisit only if bulk repertoire mining is needed.
 
 ## Code Conventions
 
