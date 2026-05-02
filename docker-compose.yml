@@ -1,0 +1,44 @@
+services:
+  api:
+    build: .
+    container_name: caissa-api
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    depends_on:
+      - chromadb
+
+  chromadb:
+    image: chromadb/chroma:0.5.5
+    container_name: caissa-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/db:/chroma/chroma
+
+  streamlit:
+    build: .
+    container_name: caissa-streamlit
+    command: streamlit run src/ui/streamlit_app.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - API_URL=http://api:8000
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./.streamlit:/app/.streamlit
+    depends_on:
+      - api

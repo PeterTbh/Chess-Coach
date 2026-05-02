@@ -1,0 +1,37 @@
+# Caissa — gitignore
+
+# User data (kept local)
+data/raw_pdfs/
+data/extracted/
+data/db/
+data/models/
+data/repertoires/
+
+# Allow .gitkeep markers for empty data dirs
+!data/raw_pdfs/.gitkeep
+!data/repertoires/.gitkeep
+!data/extracted/.gitkeep
+!data/db/.gitkeep
+!data/models/.gitkeep
+
+# File types
+*.pdf
+*.sqlite
+*.db
+*.gguf
+
+# Secrets
+.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
