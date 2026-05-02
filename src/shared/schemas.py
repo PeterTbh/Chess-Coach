@@ -10,6 +10,17 @@ class GameFetchRequest(BaseModel):
     pgn_override: str | None = None
 
 
+TimeClass = Literal[
+    "ultrabullet",
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "correspondence",
+    "unknown",
+]
+
+
 class GameMetadata(BaseModel):
     site: Literal["lichess", "chesscom", "manual"]
     game_id: str
@@ -17,6 +28,8 @@ class GameMetadata(BaseModel):
     black_username: str
     user_color: Literal["white", "black"]
     result: str
+    time_control: str = ""  # Raw PGN TimeControl header, e.g. "300+0" or "1/86400"
+    time_class: TimeClass = "unknown"
     pgn: str
 
 

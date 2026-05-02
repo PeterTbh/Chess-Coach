@@ -1,4 +1,4 @@
-"""Chess utility helpers: FEN/PGN validation, color extraction."""
+"""Chess utility helpers: FEN/PGN validation, color extraction, time-control classifier."""
 
 from __future__ import annotations
 
@@ -12,6 +12,67 @@ import chess.pgn
 logger = logging.getLogger(__name__)
 
 STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+# Speed thresholds in "estimated total seconds" = base + 40*increment.
+# Boundaries follow the established Lichess/openingtree convention.
+_ULTRABULLET_MAX = 30
+_BULLET_MAX = 120
+_BLITZ_MAX = 480
+_RAPID_MAX = 1500
+_CORRESPONDENCE_DAY_SECS = 86400
+
+TimeClassName = Literal[
+    "ultrabullet",
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "correspondence",
+    "unknown",
+]
+
+
+def classify_time_control(time_control: str) -> TimeClassName:
+    """Classify a PGN `TimeControl` header into a speed bucket.
+
+    Recognized formats:
+    - `"base+inc"` (Lichess + Chess.com live), e.g. ``"300+0"``, ``"180+2"``.
+    - `"base"` (no increment).
+    - `"1/N"` (Chess.com daily; N seconds per move). N≥86400 → correspondence,
+      otherwise classical.
+    - ``"-"``, ``""``, ``"?"`` → ``"unknown"``.
+    """
+    tc = time_control.strip()
+    if tc in {"", "-", "?"}:
+        return "unknown"
+
+    if "/" in tc:
+        try:
+            _, secs_str = tc.split("/", 1)
+            secs = int(secs_str)
+        except ValueError:
+            return "unknown"
+        return "correspondence" if secs >= _CORRESPONDENCE_DAY_SECS else "classical"
+
+    try:
+        if "+" in tc:
+            base_s, inc_s = tc.split("+", 1)
+            base, inc = int(base_s), int(inc_s)
+        else:
+            base, inc = int(tc), 0
+    except ValueError:
+        return "unknown"
+
+    total = base + 40 * inc
+    if total < _ULTRABULLET_MAX:
+        return "ultrabullet"
+    if total < _BULLET_MAX:
+        return "bullet"
+    if total < _BLITZ_MAX:
+        return "blitz"
+    if total < _RAPID_MAX:
+        return "rapid"
+    return "classical"
 
 
 def validate_fen(fen: str) -> bool:

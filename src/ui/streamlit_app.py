@@ -26,7 +26,7 @@ st.caption("Personal chess improvement system — local post-mortem")
 with st.form("fetch_form"):
     url = st.text_input(
         "Game URL",
-        placeholder="https://lichess.org/abcd1234   (Chess.com lands in slice 2)",
+        placeholder="https://lichess.org/abcd1234  or  https://chess.com/game/live/12345678",
     )
     submitted = st.form_submit_button("Fetch game")
 
@@ -61,9 +61,13 @@ if game:
     cols[1].metric("White", game["white_username"])
     cols[2].metric("Black", game["black_username"])
     cols[3].metric("Result", game["result"])
-    st.caption(
-        f"Game ID: `{game['game_id']}` · You played: **{game['user_color']}**"
-    )
+
+    tc_cols = st.columns(4)
+    tc_cols[0].metric("Time class", game.get("time_class", "unknown"))
+    tc_cols[1].metric("Time control", game.get("time_control") or "?")
+    tc_cols[2].metric("You played", game["user_color"])
+    tc_cols[3].metric("Game ID", game["game_id"])
+
     with st.expander("PGN"):
         st.code(game["pgn"], language="text")
 
