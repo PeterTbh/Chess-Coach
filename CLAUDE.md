@@ -1,6 +1,6 @@
 # CLAUDE.md — Caissa
 
-**Current status: Phase 1 in progress (scaffold).**
+**Current status: Phase 2 in progress (foundations: game fetcher + repertoire parser).**
 
 ## Mission
 
@@ -27,8 +27,13 @@ book corpus, not novel ML research.
   ~1500–2000 ELO. No personalization.
 - **B — Repertoire Deviation Detector.** PGN game vs. exactly two PGN files
   per user (`white.pgn`, `black.pgn`). Walk both move lists in parallel until
-  divergence; report move number, move played, move expected.
-- **C — Chessable export.** **Deferred to Phase 2.** Manual PGNs only.
+  divergence; report move number, move played, move expected. The user
+  supplies `data/repertoires/{white,black}.pgn` themselves (Lichess Studies
+  export, hand-written PGN, etc.); Caissa consumes whatever's at those paths.
+- **C — Chessable export.** **Paused.** Chessable has no export and
+  scraping violates ToS. Caissa expects user-supplied PGNs at
+  `data/repertoires/{white,black}.pgn`. Revisit only if Chessable opens an
+  official export API.
 - **D — Streamlit Web App.** Localhost:8501. URL input → PGN fetch → three
   panels. Board rendered via `streamlit.components.v1` with chessboard.js.
   Aggressive `st.cache_data` keyed by `(FEN, classifier_tags)`.
