@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
+from src.api.game_fetcher import GameFetchError, build_metadata_from_pgn, fetch_game
 from src.shared.schemas import (
     AdviseRequest,
     AdviseResponse,
@@ -78,17 +79,20 @@ def eval_position(req: EvalRequest) -> EvalResponse:
 
 @app.post("/game/fetch", response_model=GameMetadata)
 def game_fetch(req: GameFetchRequest) -> GameMetadata:
-    """Phase 1 stub — game fetcher wires up in Phase 2."""
-    logger.info("game/fetch stub called url=%s", req.url)
-    return GameMetadata(
-        site="manual",
-        game_id="stub",
-        white_username="stub_white",
-        black_username="stub_black",
-        user_color="white",
-        result="*",
-        pgn=req.pgn_override or "",
-    )
+    """Fetch a single game's PGN and metadata.
+
+    Phase 2 slice 1: Lichess URLs are fetched live. Chess.com lands in
+    slice 2. A `pgn_override` short-circuits the fetch (manual paste).
+    """
+    logger.info("game/fetch called url=%s override=%s", req.url, bool(req.pgn_override))
+    try:
+        if req.pgn_override:
+            return build_metadata_from_pgn(
+                site="manual", game_id="manual", pgn=req.pgn_override
+            )
+        return fetch_game(req.url)
+    except GameFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/youtube_search", response_model=YouTubeSearchResponse)
