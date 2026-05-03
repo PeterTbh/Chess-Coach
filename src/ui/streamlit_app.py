@@ -1,7 +1,8 @@
 """Caissa — Streamlit landing page.
 
-Phase 2 slice 1: paste a Lichess URL → render game metadata.
-Other panels (repertoire, eval, advisor) remain placeholders.
+Phase 3: paste a Lichess/Chess.com URL → render game metadata, move
+navigation, repertoire-deviation panel, and engine-evaluation panel.
+Strategic-commentary panel (Phase 4) remains a placeholder.
 """
 
 from __future__ import annotations
@@ -9,16 +10,94 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import chess
+import chess.svg
 import httpx
 import streamlit as st
 
+from src.ui.components.game_walker import PlyView, walk_pgn
+
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 FETCH_TIMEOUT_SECONDS = 15.0
+DIFF_TIMEOUT_SECONDS = 15.0
+EVAL_TIMEOUT_SECONDS = 10.0
 
 st.set_page_config(page_title="Caissa", page_icon="♞", layout="wide")
 
 st.title("Caissa ♞")
 st.caption("Personal chess improvement system — local post-mortem")
+
+
+# ---- Cached helpers -------------------------------------------------------
+
+
+@st.cache_data(show_spinner=False)
+def _walk_pgn_cached(pgn: str) -> list[PlyView]:
+    return walk_pgn(pgn)
+
+
+@st.cache_data(show_spinner=False)
+def _fetch_eval_cached(fen: str, source: str) -> dict[str, Any] | None:
+    """Call /eval; return parsed body on 200, None on 404, raise on others."""
+    try:
+        resp = httpx.post(
+            f"{API_URL}/eval",
+            json={"fen": fen, "source": source},
+            timeout=EVAL_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        st.warning(f"/eval network error for {fen[:40]}…: {exc}")
+        return None
+    if resp.status_code == 200:
+        return resp.json()
+    if resp.status_code == 404:
+        return None
+    st.warning(f"/eval HTTP {resp.status_code}: {resp.text[:120]}")
+    return None
+
+
+def _post_diff(pgn: str, username: str) -> dict[str, Any] | None:
+    try:
+        resp = httpx.post(
+            f"{API_URL}/repertoire/diff",
+            json={"pgn": pgn, "username": username},
+            timeout=DIFF_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        st.error(f"/repertoire/diff network error: {exc}")
+        return None
+    if resp.status_code == 200:
+        return resp.json()
+    try:
+        detail = resp.json().get("detail", resp.text)
+    except ValueError:
+        detail = resp.text
+    if resp.status_code == 404:
+        st.info(f"Repertoire missing: {detail}")
+    else:
+        st.error(f"/repertoire/diff HTTP {resp.status_code}: {detail}")
+    return None
+
+
+def _render_board_svg(fen: str, last_move_uci: str | None) -> str:
+    board = chess.Board(fen)
+    last_move = chess.Move.from_uci(last_move_uci) if last_move_uci else None
+    return chess.svg.board(
+        board, lastmove=last_move, size=380, coordinates=True
+    )
+
+
+def _format_eval(eval_payload: dict[str, Any] | None) -> str:
+    if eval_payload is None:
+        return "—"
+    if eval_payload.get("mate") is not None:
+        m = eval_payload["mate"]
+        return f"#{m}" if m > 0 else f"#{m}"
+    cp = eval_payload.get("cp")
+    if cp is None:
+        return "—"
+    sign = "+" if cp >= 0 else ""
+    return f"{sign}{cp / 100:.2f}"
 
 
 # ---- Game fetch form ------------------------------------------------------
@@ -42,6 +121,10 @@ if submitted and url:
     else:
         if resp.status_code == 200:
             st.session_state["game"] = resp.json()
+            # Reset per-game state when a new game is loaded.
+            st.session_state.pop("ply", None)
+            st.session_state.pop("evals", None)
+            st.session_state.pop("diff", None)
         else:
             try:
                 detail = resp.json().get("detail", resp.text)
@@ -50,7 +133,7 @@ if submitted and url:
             st.error(f"Fetch failed (HTTP {resp.status_code}): {detail}")
 
 
-# ---- Metadata display -----------------------------------------------------
+# ---- Metadata + main view -------------------------------------------------
 
 game: dict[str, Any] | None = st.session_state.get("game")
 
@@ -71,18 +154,133 @@ if game:
     with st.expander("PGN"):
         st.code(game["pgn"], language="text")
 
+    # ---- Move navigation + board ------------------------------------------
 
-# ---- Future panels --------------------------------------------------------
+    plies = _walk_pgn_cached(game["pgn"])
+    if not plies:
+        st.warning("PGN could not be walked — no moves to navigate.")
+    else:
+        st.divider()
+        st.subheader("Position viewer")
+
+        max_ply = len(plies) - 1
+        default_ply = min(st.session_state.get("ply", 0), max_ply)
+        selected_ply = st.slider(
+            "Move",
+            min_value=0,
+            max_value=max_ply,
+            value=default_ply,
+            help="0 = starting position; increments are half-moves (plies).",
+        )
+        st.session_state["ply"] = selected_ply
+        view = plies[selected_ply]
+
+        board_col, info_col = st.columns([2, 3])
+        with board_col:
+            svg = _render_board_svg(view.fen, view.move_uci)
+            st.markdown(svg, unsafe_allow_html=True)
+
+        with info_col:
+            label = (
+                f"After {view.fullmove_number - 1}…{view.san}"
+                if view.san and view.side_to_move == "white"
+                else (
+                    f"After {view.fullmove_number}.{view.san}"
+                    if view.san
+                    else "Starting position"
+                )
+            )
+            st.markdown(f"**{label}**  ·  ply {view.ply} / {max_ply}")
+            st.caption(f"FEN: `{view.fen}`")
+            if view.move_uci:
+                st.caption(f"Last move: `{view.move_uci}`")
+
+        # ---- Panel 1: Repertoire deviation -------------------------------
+
+        st.divider()
+        st.subheader("Panel 1 — Repertoire deviation")
+
+        if "diff" not in st.session_state:
+            user_color = game["user_color"]
+            username = game[f"{user_color}_username"]
+            with st.spinner(f"Comparing against {user_color}.pgn…"):
+                st.session_state["diff"] = _post_diff(game["pgn"], username)
+
+        diff = st.session_state.get("diff")
+        if diff is None:
+            st.caption(
+                "Place your repertoire at "
+                "`data/repertoires/white.pgn` or `black.pgn` to enable."
+            )
+        elif diff["deviated"]:
+            st.error(
+                f"**Deviated on move {diff['deviation_move_number']}** — "
+                f"you played **{diff['move_played']}**, "
+                f"repertoire prepares **{diff['move_expected']}** "
+                f"(line: *{diff.get('repertoire_line_name') or 'unknown'}*)."
+            )
+            with st.expander("FEN at deviation"):
+                st.code(diff["fen_at_deviation"])
+        else:
+            line_name = diff.get("repertoire_line_name") or "unknown"
+            st.success(
+                f"In book throughout — last known line: **{line_name}**."
+            )
+
+        # ---- Panel 2: Engine evaluation ----------------------------------
+
+        st.divider()
+        st.subheader("Panel 2 — Engine evaluation")
+
+        if st.button(
+            "Compute evaluations",
+            help=(
+                "Fetches /eval for every ply. Lichess Cloud Eval first; "
+                "Stockfish fallback for unknown positions."
+            ),
+        ):
+            evals: list[dict[str, Any] | None] = []
+            progress = st.progress(0.0, text="Evaluating…")
+            for i, pv in enumerate(plies):
+                evals.append(_fetch_eval_cached(pv.fen, "any"))
+                progress.progress((i + 1) / len(plies))
+            progress.empty()
+            st.session_state["evals"] = evals
+
+        evals = st.session_state.get("evals")
+        if evals is None:
+            st.caption("Click *Compute evaluations* to fetch /eval for every ply.")
+        else:
+            current = evals[selected_ply] if selected_ply < len(evals) else None
+            ev_cols = st.columns(3)
+            ev_cols[0].metric("Eval at this ply", _format_eval(current))
+            if current and current.get("best_move_uci"):
+                ev_cols[1].metric("Best move (UCI)", current["best_move_uci"])
+                ev_cols[2].metric("Source", current.get("source", "?"))
+
+            # Eval graph: cp series across plies, missing → 0.
+            cps: list[float] = []
+            for e in evals:
+                if e is None:
+                    cps.append(0.0)
+                elif e.get("mate") is not None:
+                    # Saturate mates at ±2000 cp for plotting only.
+                    cps.append(2000.0 if e["mate"] > 0 else -2000.0)
+                elif e.get("cp") is not None:
+                    cps.append(float(e["cp"]))
+                else:
+                    cps.append(0.0)
+            st.line_chart(
+                {"cp (white POV)": cps},
+                use_container_width=True,
+            )
+
+
+# ---- Panel 3: stub --------------------------------------------------------
 
 st.divider()
-st.subheader("Coming online phase by phase")
-st.markdown(
-    """
-- **Panel 1 — Repertoire deviation** *(Phase 3)*
-- **Panel 2 — Engine evaluation** *(Phase 3)*
-- **Panel 3 — Strategic commentary** *(Phase 4)*
-"""
-)
+st.subheader("Panel 3 — Strategic commentary")
+st.caption("Wiring up in Phase 4 (RAG over book corpus + Anthropic fallback).")
 
 
 # ---- Footer: API health ---------------------------------------------------
