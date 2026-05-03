@@ -7,6 +7,13 @@ import logging
 from fastapi import FastAPI, HTTPException
 
 from src.api.game_fetcher import GameFetchError, build_metadata_from_pgn, fetch_game
+from src.repertoire.diff import DiffError, diff_game
+from src.repertoire.parser import (
+    RepertoireError,
+    RepertoireNotFoundError,
+    load_default_repertoire,
+)
+from src.shared.chess_utils import extract_user_color
 from src.shared.schemas import (
     AdviseRequest,
     AdviseResponse,
@@ -51,16 +58,38 @@ def advise(req: AdviseRequest) -> AdviseResponse:
 
 @app.post("/repertoire/diff", response_model=RepertoireDeviation)
 def repertoire_diff(req: RepertoireDiffRequest) -> RepertoireDeviation:
-    """Phase 1 stub — Module B diff wires up in Phase 3."""
-    logger.info("repertoire/diff stub called for user=%s", req.username)
-    return RepertoireDeviation(
-        deviated=False,
-        deviation_move_number=None,
-        move_played=None,
-        move_expected=None,
-        fen_at_deviation=None,
-        repertoire_line_name=None,
-    )
+    """Detect first user deviation from `data/repertoires/{color}.pgn`.
+
+    Color is inferred from the PGN ``[White]``/``[Black]`` headers using
+    ``req.username``. The matching repertoire file is loaded from the
+    default location.
+    """
+    logger.info("repertoire/diff called for user=%s", req.username)
+
+    color = extract_user_color(req.pgn, req.username)
+    if color is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Username {req.username!r} not in PGN [White]/[Black] headers",
+        )
+
+    try:
+        repertoire = load_default_repertoire(color)
+    except RepertoireNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No repertoire file for {color}. Place one at "
+                f"data/repertoires/{color}.pgn — see CLAUDE.md."
+            ),
+        ) from exc
+    except RepertoireError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        return diff_game(req.pgn, req.username, repertoire)
+    except DiffError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/eval", response_model=EvalResponse)
