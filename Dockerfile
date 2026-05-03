@@ -4,10 +4,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# System deps for PyMuPDF + healthcheck
+# System deps for PyMuPDF + healthcheck + local engine fallback
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    stockfish \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
