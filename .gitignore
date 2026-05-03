@@ -23,6 +23,11 @@ data/repertoires/
 # Secrets
 .env
 .streamlit/secrets.toml
+# Secrets / captures — never commit
+.env
+
+# Scraper is local-only; not published to GitHub
+Scraper/
 
 # Python
 __pycache__/
@@ -35,3 +40,12 @@ __pycache__/
 
 # OS
 .DS_Store
+*.egg-info/
+.venv/
+dist/
+build/
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
