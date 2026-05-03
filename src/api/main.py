@@ -13,6 +13,11 @@ from src.engine.lichess_eval import (
     PositionNotInCloudError,
     fetch_cloud_eval,
 )
+from src.engine.stockfish import (
+    StockfishError,
+    StockfishUnavailableError,
+    analyse_position,
+)
 from src.repertoire.diff import DiffError, diff_game
 from src.repertoire.parser import (
     RepertoireError,
@@ -100,27 +105,42 @@ def repertoire_diff(req: RepertoireDiffRequest) -> RepertoireDeviation:
 
 @app.post("/eval", response_model=EvalResponse)
 def eval_position(req: EvalRequest) -> EvalResponse:
-    """Evaluate a position via Lichess Cloud Eval.
+    """Evaluate a position via Lichess Cloud Eval or local Stockfish.
 
     Source dispatch:
-    - ``"lichess_cloud"`` / ``"any"`` — query Lichess. 404 → 404.
-    - ``"local_stockfish"`` — not yet wired (M3). Returns 501.
+    - ``"lichess_cloud"`` — only Lichess. 404 surfaced as 404.
+    - ``"local_stockfish"`` — only local Stockfish.
+    - ``"any"`` — try Lichess first, fall back to Stockfish on 404 or
+      upstream failure.
     """
     logger.info("eval called source=%s", req.source)
 
     if req.source == "local_stockfish":
-        raise HTTPException(
-            status_code=501, detail="local_stockfish not yet implemented (M3)"
-        )
+        return _eval_via_stockfish(req.fen)
 
     try:
         return fetch_cloud_eval(req.fen)
     except InvalidFenError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PositionNotInCloudError as exc:
+        if req.source == "any":
+            logger.info("Lichess 404 for %s — falling back to Stockfish", req.fen)
+            return _eval_via_stockfish(req.fen)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LichessEvalError as exc:
+        if req.source == "any":
+            logger.info("Lichess upstream error — falling back to Stockfish: %s", exc)
+            return _eval_via_stockfish(req.fen)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _eval_via_stockfish(fen: str) -> EvalResponse:
+    try:
+        return analyse_position(fen)
+    except StockfishUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except StockfishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/game/fetch", response_model=GameMetadata)
