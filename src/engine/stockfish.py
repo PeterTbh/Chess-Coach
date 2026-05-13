@@ -13,19 +13,23 @@ making /eval slow.
 from __future__ import annotations
 
 import logging
-import os
 
 import chess
 import chess.engine
 
 from src.shared.chess_utils import validate_fen
 from src.shared.schemas import EvalResponse
+from src.shared.settings import settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BINARY = os.environ.get("STOCKFISH_PATH", "stockfish")
 DEFAULT_TIME_SECONDS = 0.5
 SOURCE_NAME = "local_stockfish"
+
+
+def _default_binary() -> str:
+    """Resolved at call time so tests / .env edits take effect immediately."""
+    return settings.stockfish_path
 
 
 class StockfishError(Exception):
@@ -48,7 +52,7 @@ def analyse_position(
     fen: str,
     *,
     time_seconds: float = DEFAULT_TIME_SECONDS,
-    binary: str = DEFAULT_BINARY,
+    binary: str | None = None,
 ) -> EvalResponse:
     """Run local Stockfish and return a normalized :class:`EvalResponse`.
 
@@ -63,11 +67,12 @@ def analyse_position(
     if not validate_fen(fen):
         raise InvalidFenError(f"Invalid FEN: {fen!r}")
 
+    resolved_binary = binary if binary is not None else _default_binary()
     try:
-        engine = chess.engine.SimpleEngine.popen_uci(binary)
+        engine = chess.engine.SimpleEngine.popen_uci(resolved_binary)
     except FileNotFoundError as exc:
         raise StockfishUnavailableError(
-            f"Stockfish binary not found at {binary!r}"
+            f"Stockfish binary not found at {resolved_binary!r}"
         ) from exc
     except chess.engine.EngineError as exc:
         raise StockfishUnavailableError(f"Could not launch Stockfish: {exc}") from exc

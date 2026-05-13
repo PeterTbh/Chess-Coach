@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from src.advisor.corpus import (
+    BgeEmbedder,
+    CorpusError,
+    build_or_refresh_corpus,
+    get_client,
+    get_or_create_collection,
+)
+from src.advisor.llm import LlmApiError, LlmHallucinationError
+from src.advisor.pipeline import AdviseError
+from src.advisor.pipeline import advise as run_advise
 from src.api.game_fetcher import GameFetchError, build_metadata_from_pgn, fetch_game
 from src.engine.lichess_eval import (
     InvalidFenError,
@@ -19,22 +30,21 @@ from src.engine.stockfish import (
     analyse_position,
 )
 from src.repertoire.diff import DiffError, diff_game
-from src.repertoire.parser import (
+from src.repertoire.store import (
+    DEFAULT_DB_PATH,
     RepertoireError,
     RepertoireNotFoundError,
-    load_default_repertoire,
+    init_db,
 )
-from src.shared.chess_utils import extract_user_color
 from src.shared.schemas import (
     AdviseRequest,
     AdviseResponse,
-    BookCitation,
+    DeviationReport,
     EvalRequest,
     EvalResponse,
     GameFetchRequest,
     GameMetadata,
     HealthResponse,
-    RepertoireDeviation,
     RepertoireDiffRequest,
     YouTubeSearchResponse,
 )
@@ -44,7 +54,26 @@ logger = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
 
-app = FastAPI(title="Caissa API", version=VERSION)
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Refresh the corpus index from the seed file on every startup.
+
+    Lazy embedder load — if the seed file is unchanged the indexer
+    skips before the heavy sentence-transformers import happens.
+    """
+    try:
+        embedder = BgeEmbedder()
+        client = get_client()
+        collection = get_or_create_collection(client, embedder)
+        written = build_or_refresh_corpus(collection)
+        logger.info("startup: corpus rows indexed=%d", written)
+    except CorpusError as exc:
+        logger.warning("startup: corpus index skipped: %s", exc)
+    yield
+
+
+app = FastAPI(title="Caissa API", version=VERSION, lifespan=_lifespan)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -54,53 +83,44 @@ def health() -> HealthResponse:
 
 @app.post("/advise", response_model=AdviseResponse)
 def advise(req: AdviseRequest) -> AdviseResponse:
-    """Phase 1 stub — Module A wires up in Phase 4."""
-    logger.info("advise stub called fen=%s", req.fen)
-    return AdviseResponse(
-        fen=req.fen,
-        explanation="[stub] Strategic advisor not wired yet. Phase 4.",
-        citations=[
-            BookCitation(source="stub", page=0, snippet="placeholder"),
-        ],
-        classifier_tags=["stub"],
-        model_used="anthropic_fallback",
-    )
+    """Strategic explanation pipeline (classify → retrieve → LLM)."""
+    logger.info("advise called fen=%s user=%s", req.fen, req.user_color)
+    try:
+        return run_advise(req)
+    except LlmHallucinationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LlmApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except AdviseError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@app.post("/repertoire/diff", response_model=RepertoireDeviation)
-def repertoire_diff(req: RepertoireDiffRequest) -> RepertoireDeviation:
-    """Detect first user deviation from `data/repertoires/{color}.pgn`.
+@app.post("/repertoire/diff", response_model=DeviationReport)
+def repertoire_diff(req: RepertoireDiffRequest) -> DeviationReport:
+    """Detect first user deviation against the user's SQLite repertoire.
 
-    Color is inferred from the PGN ``[White]``/``[Black]`` headers using
-    ``req.username``. The matching repertoire file is loaded from the
-    default location.
+    The repertoire is lazy-loaded from `data/repertoires/{color}.pgn` on
+    first request and reloaded whenever the PGN's mtime is newer than the
+    stored `loaded_at`. Returns the full :class:`DeviationReport`.
     """
     logger.info("repertoire/diff called for user=%s", req.username)
-
-    color = extract_user_color(req.pgn, req.username)
-    if color is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Username {req.username!r} not in PGN [White]/[Black] headers",
-        )
-
+    conn = init_db(DEFAULT_DB_PATH)
     try:
-        repertoire = load_default_repertoire(color)
+        return diff_game(req.pgn, req.username, conn, game_id=req.game_id)
     except RepertoireNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"No repertoire file for {color}. Place one at "
-                f"data/repertoires/{color}.pgn — see CLAUDE.md."
+                f"No repertoire file for the user's color. Place one at "
+                f"data/repertoires/<color>.pgn — see CLAUDE.md. ({exc})"
             ),
         ) from exc
     except RepertoireError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        return diff_game(req.pgn, req.username, repertoire)
     except DiffError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
 
 
 @app.post("/eval", response_model=EvalResponse)

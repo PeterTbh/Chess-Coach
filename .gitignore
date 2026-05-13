@@ -14,11 +14,23 @@ data/repertoires/
 !data/db/.gitkeep
 !data/models/.gitkeep
 
+# Seed corpus is committed so the app works out-of-the-box
+!data/corpus_seed.json
+
+# Local Chroma persistence (auto-built from seed)
+data/chroma/
+
 # File types
 *.pdf
 *.sqlite
 *.db
 *.gguf
+
+# Local engine binary (~110 MB, machine-specific)
+bin/
+
+# Local tooling artefact
+.superset/
 
 # Secrets
 .env

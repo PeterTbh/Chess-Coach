@@ -18,8 +18,8 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
-    # LLM
-    "anthropic>=0.39",
+    # LLM — OpenRouter via the OpenAI SDK (API-compatible)
+    "openai>=1.50",
     # Data
     "tqdm>=4.66",
     "pandas>=2.2",

@@ -1,0 +1,156 @@
+[
+  {
+    "id": "iqp-watson-mco1",
+    "tags": ["isolated_queen_pawn", "semi_open_center", "open_center"],
+    "source": "Watson - Mastering the Chess Openings vol. 1",
+    "page": 142,
+    "snippet": "The isolated queen's pawn confers active piece play in the centre and along the half-open c- and e-files. The pawn itself is a long-term weakness, so its owner usually seeks middlegame initiative — typically a kingside attack supported by Bd3 and a knight outpost on e5 — before the simplification that exposes it. Defenders blockade on d5 and trade pieces toward a winning endgame."
+  },
+  {
+    "id": "iqp-silman-rycr",
+    "tags": ["isolated_queen_pawn"],
+    "source": "Silman - How to Reassess Your Chess, 4th ed.",
+    "page": 281,
+    "snippet": "When you possess an IQP, your plan is dynamic: place a knight on e5, maximise piece activity, and push for the d4-d5 break that turns the weakness into a passer or opens lines toward the enemy king. When you face an IQP, your plan is static: blockade d5 with a knight, exchange minor pieces, and head for the endgame where d4 cannot be defended."
+  },
+  {
+    "id": "iqp-soltis-pawnstructure",
+    "tags": ["isolated_queen_pawn", "semi_open_center"],
+    "source": "Soltis - Pawn Structure Chess",
+    "page": 89,
+    "snippet": "Positions with an isolated d-pawn arise from the Tarrasch, Caro-Kann Panov, and Queen's Gambit Accepted, among others. The pawn radiates space and supports the e5- and c5-squares for pieces. The owner accepts a structural defect in exchange for the bishop pair's diagonals, open files for the rooks, and attacking chances; trading queens is almost always wrong for the IQP side."
+  },
+  {
+    "id": "hanging-pawns-watson-secrets",
+    "tags": ["hanging_pawns", "semi_open_center"],
+    "source": "Watson - Secrets of Modern Chess Strategy",
+    "page": 167,
+    "snippet": "Hanging pawns — a connected c- and d-pawn pair with no neighbouring pawns of the same colour — are simultaneously strong and weak. Advanced together they cramp the opponent and threaten the d5- or c5-break; held back they become targets along the c- and d-files. The side with hanging pawns must keep pieces active and avoid trades that leave only the pawns to defend."
+  },
+  {
+    "id": "hanging-pawns-nimzowitsch",
+    "tags": ["hanging_pawns"],
+    "source": "Nimzowitsch - My System",
+    "page": 198,
+    "snippet": "The c- and d-pawn duo, isolated from the pawn chain, owes its strength to the threat of advance: c4-c5 or d4-d5 opens lines and creates a passed pawn. The defender must restrain both, ideally by occupying the squares in front. The hanging pair illustrates the dynamic side of the doctrine of restraint."
+  },
+  {
+    "id": "opp-side-castling-aagaard",
+    "tags": ["opposite_side_castling"],
+    "source": "Aagaard - Excelling at Positional Chess",
+    "page": 118,
+    "snippet": "When the kings castle on opposite wings the game becomes a race: each side pushes the pawns in front of the opponent's king without weakening its own structure. Piece manoeuvres should support pawn storms rather than aim for slow positional gains. The first to break through, or the first to reach a decisive sacrifice, usually wins."
+  },
+  {
+    "id": "opp-side-castling-soltis",
+    "tags": ["opposite_side_castling"],
+    "source": "Soltis - Pawn Structure Chess",
+    "page": 211,
+    "snippet": "Opposite-side castling positions follow a recurring pattern: the side attacking the queenside king plays h4-h5-h6 (or h4-h5xg6); the side attacking the kingside king plays a4-b4-b5 or g4-g5. Trades on the wing being attacked usually favour the defender, so the attacker keeps pieces on and the defender seeks exchanges."
+  },
+  {
+    "id": "same-side-castling-silman",
+    "tags": ["same_side_castling"],
+    "source": "Silman - How to Reassess Your Chess, 4th ed.",
+    "page": 162,
+    "snippet": "When both kings castle short the play is slower and more positional than in opposite-side races. Pawn breaks in front of either king are dangerous self-weakenings, so both sides usually work in the centre or on the queenside, expanding only when the resulting weakness is compensated by a clear plan."
+  },
+  {
+    "id": "same-side-castling-karpov",
+    "tags": ["same_side_castling", "closed_center"],
+    "source": "Karpov & Mazukevich - Find the Right Plan",
+    "page": 76,
+    "snippet": "With kings on the same side and a closed centre, the strategic emphasis shifts to the minority attack, knight manoeuvres to good squares, and slow piece regrouping. Avoid pawn moves in front of your own king; prefer to play b4-b5 (or ...b4) on the opposite wing where the resulting weaknesses target your opponent, not yourself."
+  },
+  {
+    "id": "queens-off-dvoretsky",
+    "tags": ["queens_off", "endgame_phase"],
+    "source": "Dvoretsky - Endgame Manual",
+    "page": 312,
+    "snippet": "Once the queens are exchanged the king becomes a strong piece. Activate it via the centre or toward the weakened side. Endgame technique elevates small advantages — better minor piece, more space, a target pawn — into decisive ones, and the side with the worse king usually loses the half-tempo race."
+  },
+  {
+    "id": "queens-off-silman-amateur",
+    "tags": ["queens_off"],
+    "source": "Silman - The Amateur's Mind",
+    "page": 233,
+    "snippet": "Many players hesitate to trade queens, fearing a 'boring' endgame. In reality, queen trades are the natural reward for the side with a structural plus: better pawns, more space, or a superior minor piece. If you are pressed for tactical chances, keep queens on; if you have a long-term advantage, simplify."
+  },
+  {
+    "id": "ocb-watson-secrets",
+    "tags": ["opposite_colored_bishops"],
+    "source": "Watson - Secrets of Modern Chess Strategy",
+    "page": 244,
+    "snippet": "Opposite-coloured bishops favour the attacker in the middlegame and the defender in the endgame. In attacks each bishop dominates a colour the other cannot contest; in pure endgames a single weakness on the wrong colour can be impregnable. Never assume an OCB position is drawn — the difference between attacker and defender is dynamic, not static."
+  },
+  {
+    "id": "ocb-dvoretsky",
+    "tags": ["opposite_colored_bishops", "endgame_phase"],
+    "source": "Dvoretsky - Endgame Manual",
+    "page": 158,
+    "snippet": "In opposite-coloured bishop endgames the defender's task is to place pawns on the colour of the opponent's bishop. The stronger side typically needs two connected passed pawns, well separated, to win; a single passer is almost always drawn if the defending king reaches the queening square."
+  },
+  {
+    "id": "open-center-nimzowitsch",
+    "tags": ["open_center", "semi_open_center"],
+    "source": "Nimzowitsch - My System",
+    "page": 91,
+    "snippet": "When the central pawns have been exchanged the open centre rewards rapid development and king safety. Rooks belong on the half-open files; bishops aim for long diagonals through the cleared squares. The side that completes development first — and connects the rooks — usually seizes the initiative."
+  },
+  {
+    "id": "closed-center-watson-mco2",
+    "tags": ["closed_center", "same_side_castling"],
+    "source": "Watson - Mastering the Chess Openings vol. 2",
+    "page": 174,
+    "snippet": "A closed centre signals slow, plan-driven play on the wings. Identify the natural pawn break for each side — usually a flank pawn lever that opens a file — and prepare it with piece manoeuvres. Quick attacks rarely succeed against a closed centre; positional accumulation does."
+  },
+  {
+    "id": "endgame-phase-dvoretsky",
+    "tags": ["endgame_phase"],
+    "source": "Dvoretsky - Endgame Manual",
+    "page": 12,
+    "snippet": "The transition into the endgame demands re-evaluation: king activity, pawn structure, and minor-piece quality matter far more than middlegame attacking potential. Trade pieces when you are better and pawns when you are worse; centralise the king at the first safe moment."
+  },
+  {
+    "id": "endgame-silman-rycr",
+    "tags": ["endgame_phase", "queens_off"],
+    "source": "Silman - How to Reassess Your Chess, 4th ed.",
+    "page": 411,
+    "snippet": "Endgame play is about minor advantages: a better pawn structure, an active king, a superior minor piece. The 'principle of two weaknesses' applies: usually you must create a second target before the first becomes decisive, since a single weakness can often be held."
+  },
+  {
+    "id": "iqp-versus-watson-mco1",
+    "tags": ["isolated_queen_pawn", "same_side_castling"],
+    "source": "Watson - Mastering the Chess Openings vol. 1",
+    "page": 147,
+    "snippet": "Playing against an IQP requires patience: blockade the d5-square with a knight, trade attacking minor pieces, and avoid pawn breaks that release the tension prematurely. The defender's reward is an endgame in which d4 cannot be defended and falls to the c- or e-file rook."
+  },
+  {
+    "id": "minority-attack-soltis",
+    "tags": ["same_side_castling", "closed_center", "semi_open_center"],
+    "source": "Soltis - Pawn Structure Chess",
+    "page": 134,
+    "snippet": "The minority attack — White's a4-b4-b5 against Black's queenside majority in Carlsbad structures — aims to create a backward c-pawn or an isolated a-pawn target. Black counters in the centre with ...c5 or on the kingside with a piece attack, accepting that defending the queenside passively is rarely sustainable."
+  },
+  {
+    "id": "bishop-pair-watson-secrets",
+    "tags": ["open_center", "semi_open_center"],
+    "source": "Watson - Secrets of Modern Chess Strategy",
+    "page": 102,
+    "snippet": "The bishop pair gains in value as the position opens. Two bishops covering complementary diagonals dominate a single bishop or knight in long-range play. The player with the pair should open the centre or trade one minor piece while keeping the bishops; the player without should keep the centre closed and aim for knight outposts."
+  },
+  {
+    "id": "general-development-nimzowitsch",
+    "tags": ["open_center", "semi_open_center"],
+    "source": "Nimzowitsch - My System",
+    "page": 17,
+    "snippet": "The opening's first concern is development: bring out minor pieces, castle, and connect the rooks before launching any commitment in the centre or on the wings. Time spent on premature aggression is repaid with interest in the middlegame when the developed side counters with central play."
+  },
+  {
+    "id": "prophylaxis-aagaard",
+    "tags": ["same_side_castling", "closed_center"],
+    "source": "Aagaard - Excelling at Positional Chess",
+    "page": 31,
+    "snippet": "Prophylactic thinking — asking, on every move, what the opponent would play if free — is the hallmark of strong positional players. Before committing to your own plan, prevent the opponent's. Many seemingly slow moves are in fact preventive: stopping a break, controlling a square, or restraining a piece that wants to be active."
+  }
+]
