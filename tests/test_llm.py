@@ -76,31 +76,6 @@ class _FakeClient:
         return self._responses.pop(0)
 
 
-class _NotConfiguredClient:
-    """Stand-in for an OpenAI client when the user has no key set."""
-
-    def is_configured(self) -> bool:
-        return False
-
-    def chat_completions_create(self, *, model: str, messages: list) -> str:
-        raise AssertionError("not-configured client must not be called")
-
-
-class _FailingClient:
-    """Raises a fixed exception on every call. Configured."""
-
-    def __init__(self, exc: BaseException) -> None:
-        self._exc = exc
-        self.calls = 0
-
-    def is_configured(self) -> bool:
-        return True
-
-    def chat_completions_create(self, *, model: str, messages: list) -> str:
-        self.calls += 1
-        raise self._exc
-
-
 # ---- SAN extractor -------------------------------------------------------
 
 def test_extract_san_matches_piece_moves() -> None:
@@ -227,11 +202,11 @@ def test_clean_first_response_passes_with_zero_retries() -> None:
     client = _FakeClient([
         "White's best move is e4. The opening leads to space and central control."
     ])
-    result = generate_explanation(_request(), openrouter_client=client, openai_client=_NotConfiguredClient())
+    result = generate_explanation(_request(), openai_client=client)
     assert isinstance(result, LlmResult)
     assert result.retries_used == 0
     assert "e4" in result.explanation
-    assert result.model_used == "openrouter"
+    assert result.model_used == "openai"
     assert len(client.calls) == 1
 
 
@@ -240,7 +215,7 @@ def test_response_without_any_move_passes_immediately() -> None:
     client = _FakeClient([
         "The position features a balanced central structure with no immediate weaknesses."
     ])
-    result = generate_explanation(_request(), openrouter_client=client, openai_client=_NotConfiguredClient())
+    result = generate_explanation(_request(), openai_client=client)
     assert result.retries_used == 0
 
 
@@ -249,7 +224,7 @@ def test_hallucinated_move_triggers_one_retry_then_passes() -> None:
         "White should play Nh3 to develop quickly.",  # Nh3 not in PV
         "White plays e4 to control the centre.",      # clean retry
     ])
-    result = generate_explanation(_request(), openrouter_client=client, openai_client=_NotConfiguredClient())
+    result = generate_explanation(_request(), openai_client=client)
     assert result.retries_used == 1
     assert len(client.calls) == 2
     # Retry call must include a corrective user turn referencing the bad move.
@@ -265,13 +240,13 @@ def test_hallucination_on_both_passes_raises() -> None:
         "Actually Nh3 is even better.",
     ])
     with pytest.raises(LlmHallucinationError) as info:
-        generate_explanation(_request(), openrouter_client=client, openai_client=_NotConfiguredClient())
+        generate_explanation(_request(), openai_client=client)
     assert "Nh3" in str(info.value)
 
 
 def test_system_prompt_is_first_message() -> None:
     client = _FakeClient(["fine response with no moves at all"])
-    generate_explanation(_request(), openrouter_client=client, openai_client=_NotConfiguredClient())
+    generate_explanation(_request(), openai_client=client)
     msgs = client.calls[0]["messages"]
     assert msgs[0]["role"] == "system"
     assert msgs[0]["content"] == SYSTEM_PROMPT
@@ -281,9 +256,8 @@ def test_model_id_passed_through() -> None:
     client = _FakeClient(["ok"])
     generate_explanation(
         _request(),
-        openrouter_client=client,
-        openrouter_model="custom/test-model",
-        openai_client=_NotConfiguredClient(),
+        openai_client=client,
+        openai_model="custom/test-model",
     )
     assert client.calls[0]["model"] == "custom/test-model"
 
@@ -313,77 +287,6 @@ def test_openrouter_wraps_sdk_exceptions(monkeypatch: pytest.MonkeyPatch) -> Non
     cli._client = _Boom()  # bypass lazy load
     with pytest.raises(LlmApiError, match="boom"):
         cli.chat_completions_create(model="m", messages=[])
-
-
-# ---- OpenAI fallback chain ----------------------------------------------
-
-def test_falls_back_to_openai_on_openrouter_api_error() -> None:
-    failing_or = _FailingClient(LlmApiError("OpenRouter call failed: 429"))
-    clean_oa = _FakeClient(["White plays e4 to claim the centre."])
-    result = generate_explanation(
-        _request(), openrouter_client=failing_or, openai_client=clean_oa,
-    )
-    assert result.model_used == "openai"
-    assert result.retries_used == 0
-    assert failing_or.calls == 1
-    assert len(clean_oa.calls) == 1
-
-
-def test_falls_back_to_openai_on_openrouter_hallucination() -> None:
-    """OpenRouter hallucinates twice → fallback to OpenAI succeeds clean."""
-    or_client = _FakeClient(["Nh3 wins.", "Actually Nh3 is still best."])  # 2 bad
-    clean_oa = _FakeClient(["The engine prefers e4 for central control."])
-    result = generate_explanation(
-        _request(), openrouter_client=or_client, openai_client=clean_oa,
-    )
-    assert result.model_used == "openai"
-    assert len(or_client.calls) == 2  # full retry cycle on OR before falling back
-    assert len(clean_oa.calls) == 1
-
-
-def test_no_fallback_when_openai_not_configured() -> None:
-    failing_or = _FailingClient(LlmApiError("OpenRouter call failed: 429"))
-    with pytest.raises(LlmApiError, match="429"):
-        generate_explanation(
-            _request(),
-            openrouter_client=failing_or,
-            openai_client=_NotConfiguredClient(),
-        )
-
-
-def test_both_providers_fail_raises_secondary_error() -> None:
-    failing_or = _FailingClient(LlmApiError("OpenRouter: 429"))
-    failing_oa = _FailingClient(LlmApiError("OpenAI: 503"))
-    with pytest.raises(LlmApiError, match="503"):
-        generate_explanation(
-            _request(), openrouter_client=failing_or, openai_client=failing_oa,
-        )
-
-
-def test_openrouter_success_skips_openai_entirely() -> None:
-    or_client = _FakeClient(["e4 develops cleanly."])
-    oa_client = _FakeClient(["never called"])
-    result = generate_explanation(
-        _request(), openrouter_client=or_client, openai_client=oa_client,
-    )
-    assert result.model_used == "openrouter"
-    assert len(or_client.calls) == 1
-    assert len(oa_client.calls) == 0
-
-
-def test_openai_fallback_also_runs_hallucination_retry() -> None:
-    """OpenAI gets its own full retry cycle on hallucination."""
-    failing_or = _FailingClient(LlmApiError("OpenRouter: 429"))
-    oa_client = _FakeClient([
-        "Nh3 is the move.",   # bad
-        "Right, e4 it is.",   # clean retry
-    ])
-    result = generate_explanation(
-        _request(), openrouter_client=failing_or, openai_client=oa_client,
-    )
-    assert result.model_used == "openai"
-    assert result.retries_used == 1
-    assert len(oa_client.calls) == 2
 
 
 # ---- OpenAIClient sanity -----------------------------------------------

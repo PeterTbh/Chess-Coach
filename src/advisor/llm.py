@@ -354,47 +354,27 @@ def _try_provider(
 def generate_explanation(
     req: LlmRequest,
     *,
-    openrouter_client: _ChatClient | None = None,
-    openrouter_model: str | None = None,
     openai_client: OpenAIClient | _ChatClient | None = None,
     openai_model: str | None = None,
+    # Kept for back-compat with older test call sites. Ignored.
+    openrouter_client: _ChatClient | None = None,  # noqa: ARG001
+    openrouter_model: str | None = None,  # noqa: ARG001
 ) -> LlmResult:
-    """Generate a strategic explanation. Tries OpenRouter first; falls back
-    to OpenAI when OpenRouter raises :class:`LlmApiError` or
-    :class:`LlmHallucinationError` and an OpenAI key is configured.
+    """Generate a strategic explanation through OpenAI.
 
-    If OpenAI isn't configured, the primary error propagates unchanged.
-    If both providers fail, the OpenAI error is raised.
+    OpenRouter has been cut from the active path — it was rate-limited
+    upstream on the free Gemma tier often enough that the resulting SDK
+    retries timed out the UI. The :class:`OpenRouterClient` is still
+    available in this module for callers that want to wire it back later.
     """
-    or_client = openrouter_client if openrouter_client is not None else OpenRouterClient()
-    or_model = openrouter_model or settings.openrouter_model
+    client = openai_client if openai_client is not None else OpenAIClient()
+    model = openai_model or settings.openai_model
     allowed = allowed_moves_from_engine(req.fen, req.engine)
 
-    try:
-        return _try_provider(
-            client=or_client,
-            model=or_model,
-            model_label=MODEL_USED_OPENROUTER,
-            req=req,
-            allowed=allowed,
-        )
-    except (LlmApiError, LlmHallucinationError) as primary_err:
-        oa = openai_client if openai_client is not None else OpenAIClient()
-        if not _client_is_configured(oa):
-            logger.info("OpenAI fallback not configured — propagating OpenRouter error")
-            raise
-        logger.warning("OpenRouter failed (%s) — falling back to OpenAI", primary_err)
-        oa_model = openai_model or settings.openai_model
-        return _try_provider(
-            client=oa,
-            model=oa_model,
-            model_label=MODEL_USED_OPENAI,
-            req=req,
-            allowed=allowed,
-        )
-
-
-def _client_is_configured(client: Any) -> bool:
-    """Treat anything without an ``is_configured`` method (test fakes) as configured."""
-    check = getattr(client, "is_configured", None)
-    return bool(check()) if callable(check) else True
+    return _try_provider(
+        client=client,
+        model=model,
+        model_label=MODEL_USED_OPENAI,
+        req=req,
+        allowed=allowed,
+    )

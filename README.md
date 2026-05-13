@@ -25,14 +25,14 @@ Python-only, runs on localhost, single-user.
 | Engine | Lichess Cloud Eval API → local Stockfish (host binary) |
 | RAG vector DB | ChromaDB persistent client (`data/chroma/`) |
 | Embeddings | `BAAI/bge-small-en-v1.5` via sentence-transformers |
-| LLM | OpenRouter (default: `google/gemma-4-31b-it:free`) → OpenAI (`gpt-5-mini`) fallback |
+| LLM | OpenAI (`gpt-5-mini` by default) — OpenRouter client still in tree but currently unused |
 | PGN, board SVG | `python-chess` |
 
 The strategic-commentary pipeline is `classify(FEN) → retrieve top-3 from
 ChromaDB → LLM call → anti-hallucination regex check → result`. Anything
 the model says that looks like a move must appear in the engine's PV or
 the best move; otherwise the LLM is asked to rewrite once, and a second
-violation triggers fallback to OpenAI (or surfaces the error).
+violation surfaces as an error.
 
 ## Quick start
 
@@ -65,10 +65,9 @@ Required (or fallback won't work):
 |---|---|
 | `LICHESS_USERNAME` / `CHESSCOM_USERNAME` | Which side of fetched games is *you*, so the deviation detector picks the right repertoire. |
 | `STOCKFISH_PATH` | Absolute path to your Stockfish binary. Inside Docker `stockfish` works on PATH. |
-| `OPENROUTER_API_KEY` | Required for Panel 3. Get one at <https://openrouter.ai/keys>. |
-| `OPENROUTER_MODEL` | Default `google/gemma-4-31b-it:free`. Swap to a paid model if free-tier 429s annoy you. |
-| `OPENAI_API_KEY` | Optional. When set, Caissa falls back to OpenAI if OpenRouter errors or hallucinates twice. |
+| `OPENAI_API_KEY` | Required for Panel 3. Get one at <https://platform.openai.com/api-keys>. |
 | `OPENAI_MODEL` | Default `gpt-5-mini`. |
+| `OPENROUTER_API_KEY` | Currently unused. Kept in the env schema so the OpenRouter client can be re-enabled without code surgery (e.g. once you've set up BYOK to dodge free-tier rate limits). |
 
 ### 4. Drop your repertoire PGNs
 
@@ -151,10 +150,12 @@ file.
 - **Retrieval**: top-3 by cosine similarity of `(FEN + tags + best move)`
   through `bge-small-en-v1.5`. No similarity floor — the LLM is told to
   use what's relevant.
-- **LLM chain**: OpenRouter primary, OpenAI fallback. Both calls go through
-  the OpenAI SDK (OpenRouter is OpenAI-API-compatible). Each provider
-  runs the full anti-hallucination cycle (initial call → SAN regex check
-  → one retry with corrective hint) before the chain falls through.
+- **LLM**: OpenAI (default `gpt-5-mini`) via the OpenAI Python SDK.
+  Runs the anti-hallucination cycle: initial call → SAN regex check → one
+  retry with corrective hint → second violation raises. The OpenRouter
+  client class is still in `src/advisor/llm.py` for easy re-enablement;
+  swap it back into `generate_explanation` when you've got a key that
+  isn't rate-limited.
 
 ## Project layout
 

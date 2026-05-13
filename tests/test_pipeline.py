@@ -35,14 +35,6 @@ class _FakeChatClient:
         return self._responses.pop(0)
 
 
-class _NotConfigured:
-    def is_configured(self) -> bool:
-        return False
-
-    def chat_completions_create(self, *, model: str, messages: list) -> str:
-        raise AssertionError("not-configured client must not be called")
-
-
 def _engine_input() -> EngineAnalysisInput:
     return EngineAnalysisInput(
         eval_cp=18,
@@ -102,10 +94,10 @@ def test_advise_returns_full_response(small_corpus) -> None:
     resp = pipe.advise(
         _request(),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert resp.fen == FEN_OPENING
-    assert resp.model_used == "openrouter"
+    assert resp.model_used == "openai"
     assert resp.classifier_tags == sorted(resp.classifier_tags)
     assert resp.engine_input_echo.best_move_san == "O-O"
     assert resp.engine_input_echo.eval_cp == 18
@@ -125,7 +117,7 @@ def test_advise_uses_provided_engine_without_calling_engine_helpers(
     pipe.advise(
         _request(with_engine=True),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
 
 
@@ -148,7 +140,7 @@ def test_advise_fetches_engine_from_lichess_when_not_provided(
     resp = pipe.advise(
         _request(with_engine=False),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert resp.engine_input_echo.eval_cp == 24
     assert resp.engine_input_echo.best_move_san  # converted via UCI→SAN
@@ -176,7 +168,7 @@ def test_advise_falls_back_to_stockfish_on_lichess_miss(
     resp = pipe.advise(
         _request(with_engine=False),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert resp.engine_input_echo.eval_cp == 10
 
@@ -199,10 +191,7 @@ def test_advise_raises_when_both_engines_fail(
         pipe.advise(
             _request(with_engine=False),
             collection=small_corpus,
-            llm_kwargs={
-                "openrouter_client": _FakeChatClient([]),
-                "openai_client": _NotConfigured(),
-            },
+            llm_kwargs={"openai_client": _FakeChatClient([])},
         )
 
 
@@ -213,7 +202,7 @@ def test_classifier_tags_are_echoed(small_corpus) -> None:
     resp = pipe.advise(
         _request(),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     # The starting-ish opening has at least one structural tag.
     assert isinstance(resp.classifier_tags, list)
@@ -224,7 +213,7 @@ def test_citations_pass_through_source_page_snippet(small_corpus) -> None:
     resp = pipe.advise(
         _request(),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert len(resp.citations) == 1
     cit = resp.citations[0]
@@ -241,7 +230,7 @@ def test_short_explanation_logs_warning_but_returns(small_corpus, caplog) -> Non
     resp = pipe.advise(
         _request(),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert resp.explanation == "Too short."
     assert any("word count" in rec.message for rec in caplog.records)
@@ -255,7 +244,7 @@ def test_missing_tag_mention_logs_warning(small_corpus, caplog) -> None:
     pipe.advise(
         _request(),
         collection=small_corpus,
-        llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+        llm_kwargs={"openai_client": fake_or},
     )
     assert any("does not mention any classifier tag" in r.message for r in caplog.records)
 
@@ -271,7 +260,7 @@ def test_llm_hallucination_propagates(small_corpus) -> None:
         pipe.advise(
             _request(),
             collection=small_corpus,
-            llm_kwargs={"openrouter_client": fake_or, "openai_client": _NotConfigured()},
+            llm_kwargs={"openai_client": fake_or},
         )
 
 
@@ -284,5 +273,5 @@ def test_llm_api_error_propagates(small_corpus) -> None:
         pipe.advise(
             _request(),
             collection=small_corpus,
-            llm_kwargs={"openrouter_client": _Failing(), "openai_client": _NotConfigured()},
+            llm_kwargs={"openai_client": _Failing()},
         )
