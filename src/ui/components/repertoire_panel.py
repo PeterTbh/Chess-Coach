@@ -1,7 +1,8 @@
 """Panel 1 — Repertoire deviation (Feature 1.3).
 
-Renders header + clickable user-halfmove list (green/red/grey) + the
-position at ``fen_before_deviation`` + a played-vs-expected table.
+Renders header + a Lichess-style compact movetext (move number on the
+left, both halfmoves side-by-side) + the position at
+``fen_before_deviation`` + a played-vs-expected table.
 
 The classifier helper is intentionally pure (no Streamlit), so it can be
 unit-tested in isolation.
@@ -24,8 +25,6 @@ _STATUS_DOT: dict[HalfmoveStatus, str] = {
     "deviation": "🔴",
     "after": "⚪",
 }
-
-_BUTTONS_PER_ROW = 4
 
 
 def classify_halfmove(
@@ -61,13 +60,23 @@ def _render_board_svg(fen: str, last_move_uci: str | None = None) -> str:
 
 def render_deviation_panel(
     diff: dict[str, Any] | None,
-    user_halfmoves: list[PlyView],
+    all_plies: list[PlyView],
     user_color: str,
+    *,
+    evals: list[dict[str, Any] | None] | None = None,
 ) -> None:
     """Render Panel 1 in place. Side-effect-only.
 
-    Mutates ``st.session_state["ply"]`` when a move button is clicked and
-    triggers a rerun so the position viewer below picks up the new ply.
+    Mutates ``st.session_state["ply"]`` when a move is clicked and triggers
+    a rerun so the position viewer below picks up the new ply.
+
+    Args:
+        diff: ``/repertoire/diff`` response payload, or ``None``.
+        all_plies: full walk_pgn output, ply 0..N. The movetext renders
+            both colours; only user halfmoves are status-coloured.
+        user_color: ``"white"`` or ``"black"``.
+        evals: optional parallel list of eval payloads. When present, each
+            cell appends a compact eval annotation (`+0.30`, `#3`, etc.).
     """
     st.subheader("Panel 1 — Repertoire deviation")
 
@@ -95,40 +104,64 @@ def render_deviation_panel(
         else:
             st.info("No user moves recorded yet.")
 
-    # ---- Move list ------------------------------------------------------
-    if user_halfmoves:
-        _render_move_buttons(
-            user_halfmoves,
+    # ---- Movetext list --------------------------------------------------
+    move_plies = [p for p in all_plies if p.ply > 0]
+    if move_plies:
+        _render_movetext(
+            move_plies,
             in_book_until_ply=in_book_until,
             deviation_ply=deviation_ply,
+            user_color=user_color,
+            evals=evals,
         )
     else:
-        st.caption("No user halfmoves in this PGN.")
+        st.caption("No moves in this PGN.")
 
     # ---- Board + comparison table (only on deviation) -------------------
     if deviation["occurred"]:
         _render_deviation_detail(deviation)
 
 
-def _render_move_buttons(
-    halfmoves: list[PlyView],
+def _render_movetext(
+    move_plies: list[PlyView],
     *,
     in_book_until_ply: int,
     deviation_ply: int | None,
+    user_color: str,
+    evals: list[dict[str, Any] | None] | None,
 ) -> None:
-    """Grid of buttons, one per user halfmove. Click → jump position viewer."""
-    rows = [
-        halfmoves[i : i + _BUTTONS_PER_ROW]
-        for i in range(0, len(halfmoves), _BUTTONS_PER_ROW)
-    ]
+    """Lichess-style full-move grid. One row per chess move number."""
+    user_parity = 1 if user_color == "white" else 0
     clicked_ply: int | None = None
-    for row in rows:
-        cols = st.columns(_BUTTONS_PER_ROW)
-        for col, view in zip(cols, row, strict=False):
-            status = classify_halfmove(view.ply, in_book_until_ply, deviation_ply)
-            dot = _STATUS_DOT[status]
-            move_number = (view.ply + 1) // 2
-            label = f"{dot} {move_number}. {view.san}"
+
+    # Group halfmoves into (white_view, black_view_or_None) pairs by move number.
+    pairs: dict[int, dict[str, PlyView | None]] = {}
+    for view in move_plies:
+        move_number = (view.ply + 1) // 2
+        side = "white" if view.ply % 2 == 1 else "black"
+        pairs.setdefault(move_number, {"white": None, "black": None})[side] = view
+
+    for move_number in sorted(pairs):
+        white_view = pairs[move_number]["white"]
+        black_view = pairs[move_number]["black"]
+        cols = st.columns([1, 4, 4])
+        cols[0].markdown(
+            f"<div style='padding-top:0.45rem; color:#888;'>"
+            f"{move_number}.</div>",
+            unsafe_allow_html=True,
+        )
+        for col, view in [(cols[1], white_view), (cols[2], black_view)]:
+            if view is None:
+                col.markdown("&nbsp;", unsafe_allow_html=True)
+                continue
+            is_user_move = view.ply % 2 == user_parity
+            status = (
+                classify_halfmove(view.ply, in_book_until_ply, deviation_ply)
+                if is_user_move
+                else None
+            )
+            dot = _STATUS_DOT[status] if status else "·"
+            label = _format_move_label(dot, view, evals)
             key = f"panel1_move_{view.ply}"
             if col.button(label, key=key, use_container_width=True):
                 clicked_ply = view.ply
@@ -136,6 +169,29 @@ def _render_move_buttons(
     if clicked_ply is not None:
         st.session_state["ply"] = clicked_ply
         st.rerun()
+
+
+def _format_move_label(
+    dot: str, view: PlyView, evals: list[dict[str, Any] | None] | None
+) -> str:
+    eval_str = ""
+    if evals is not None and view.ply < len(evals):
+        eval_str = _fmt_eval_compact(evals[view.ply])
+    if eval_str:
+        return f"{dot} {view.san}  {eval_str}"
+    return f"{dot} {view.san}"
+
+
+def _fmt_eval_compact(payload: dict[str, Any] | None) -> str:
+    if payload is None:
+        return ""
+    if payload.get("mate") is not None:
+        return f"#{payload['mate']}"
+    cp = payload.get("cp")
+    if cp is None:
+        return ""
+    sign = "+" if cp >= 0 else ""
+    return f"{sign}{cp / 100:.2f}"
 
 
 def _render_deviation_detail(deviation: dict[str, Any]) -> None:

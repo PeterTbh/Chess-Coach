@@ -217,9 +217,23 @@ def test_move_button_click_updates_session_ply(app_test: AppTest) -> None:
     app_test.run()
     assert not app_test.exception
 
-    # Each user halfmove gets a button keyed "panel1_move_<ply>".
     target_key = "panel1_move_15"
     target = next((b for b in app_test.button if b.key == target_key), None)
     assert target is not None, f"button {target_key} not found"
     target.click().run()
     assert app_test.session_state["ply"] == 15
+
+
+def test_opponent_halfmoves_are_clickable(app_test: AppTest) -> None:
+    """The Lichess-style movetext renders both sides; clicking an opponent
+    halfmove (even ply for a white user) jumps the position viewer."""
+    app_test.session_state["game"] = _mock_game()
+    app_test.session_state["diff"] = _mock_diff_deviation()
+    app_test.run()
+    assert not app_test.exception
+
+    # Ply 2 = black's first halfmove for a white user.
+    target = next((b for b in app_test.button if b.key == "panel1_move_2"), None)
+    assert target is not None, "opponent halfmove button missing"
+    target.click().run()
+    assert app_test.session_state["ply"] == 2

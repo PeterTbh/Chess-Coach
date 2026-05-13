@@ -10,11 +10,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import chess
-import chess.svg
 import httpx
 import streamlit as st
 
+from src.ui.components.animated_board import render_animated_board
 from src.ui.components.explain_panel import render_explain_panel
 from src.ui.components.game_walker import PlyView, walk_pgn
 from src.ui.components.repertoire_panel import (
@@ -82,14 +81,6 @@ def _post_diff(pgn: str, username: str) -> dict[str, Any] | None:
     else:
         st.error(f"/repertoire/diff HTTP {resp.status_code}: {detail}")
     return None
-
-
-def _render_board_svg(fen: str, last_move_uci: str | None) -> str:
-    board = chess.Board(fen)
-    last_move = chess.Move.from_uci(last_move_uci) if last_move_uci else None
-    return chess.svg.board(
-        board, lastmove=last_move, size=380, coordinates=True
-    )
 
 
 def _format_eval(eval_payload: dict[str, Any] | None) -> str:
@@ -177,7 +168,12 @@ if game:
 
         diff = st.session_state.get("diff")
         user_halfmoves = filter_user_halfmoves(plies, game["user_color"])
-        render_deviation_panel(diff, user_halfmoves, game["user_color"])
+        render_deviation_panel(
+            diff,
+            plies,
+            game["user_color"],
+            evals=st.session_state.get("evals"),
+        )
 
         # ---- Position viewer (slider + board) ----------------------------
 
@@ -198,8 +194,14 @@ if game:
 
         board_col, info_col = st.columns([2, 3])
         with board_col:
-            svg = _render_board_svg(view.fen, view.move_uci)
-            st.markdown(svg, unsafe_allow_html=True)
+            prev_fen = st.session_state.get("last_displayed_fen") or view.fen
+            render_animated_board(
+                fen=view.fen,
+                prev_fen=prev_fen,
+                last_move_uci=view.move_uci,
+                size=400,
+            )
+            st.session_state["last_displayed_fen"] = view.fen
 
         with info_col:
             label = (
