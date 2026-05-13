@@ -57,3 +57,14 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.uv]
+# onnxruntime >=1.20 dropped Intel Mac (x86_64) wheels; cap for local dev on Intel
+override-dependencies = [
+    "onnxruntime<=1.19.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torch<=2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # torch 2.2.2 was compiled against numpy 1.x; numpy 2.x causes a crash at import
+    "numpy<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # transformers 5.x requires torch>=2.4; cap to 4.x for compatibility with torch 2.2.2
+    "transformers<5; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
