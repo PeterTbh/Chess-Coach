@@ -7,6 +7,7 @@ is on ``PATH``.
 
 from __future__ import annotations
 
+import os
 import shutil
 from typing import Any
 
@@ -16,6 +17,15 @@ import pytest
 
 from src.engine import stockfish as sf
 from src.shared.chess_utils import STARTING_FEN
+from src.shared.settings import settings
+
+
+def _resolve_stockfish_binary() -> str | None:
+    """Return a runnable Stockfish path: explicit setting, $STOCKFISH_PATH, or PATH."""
+    candidate = settings.stockfish_path or os.environ.get("STOCKFISH_PATH") or "stockfish"
+    if os.path.isabs(candidate) and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+    return shutil.which(candidate)
 
 # ---- Fakes ----------------------------------------------------------------
 
@@ -160,8 +170,8 @@ def test_no_score_in_info_raises_analysis_error(
 # ---- Optional integration test (only if binary present) ------------------
 
 @pytest.mark.skipif(
-    shutil.which("stockfish") is None,
-    reason="stockfish binary not on PATH",
+    _resolve_stockfish_binary() is None,
+    reason="stockfish binary not resolvable (not on PATH and STOCKFISH_PATH unset/invalid)",
 )
 def test_real_stockfish_runs_on_starting_position() -> None:
     """Sanity check: real Stockfish completes a 0.1s analysis."""

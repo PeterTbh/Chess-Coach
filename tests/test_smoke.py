@@ -11,7 +11,7 @@ client = TestClient(app)
 
 def test_schemas_importable() -> None:
     assert hasattr(schemas, "AdviseResponse")
-    assert hasattr(schemas, "RepertoireDeviation")
+    assert hasattr(schemas, "DeviationReport")
     assert hasattr(schemas, "EvalResponse")
     assert hasattr(schemas, "GameMetadata")
 

@@ -1,185 +1,278 @@
-"""Tests for the Module B diff (Phase 3 Slice 1)."""
+"""Tests for Module B diff (Feature 1.2) — SQLite-backed."""
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
+import chess
+import chess.pgn
 import pytest
 
 from src.repertoire.diff import DiffError, diff_game
-from src.repertoire.parser import load_repertoire
+from src.repertoire.store import (
+    RepertoireNotFoundError,
+    init_db,
+    load_repertoire_into_db,
+)
 
-# ---- Fixtures ------------------------------------------------------------
+# ---- Fixtures -------------------------------------------------------------
 
-# White repertoire: Spanish mainline with a Bc4 sideline + Italian transposition.
-WHITE_REP_PGN = """
+SPANISH_REP_PGN = """
 [Event "Spanish mainline"]
 [Site "?"]
 [Result "*"]
 
-1. e4 e5 2. Nf3 Nc6 3. Bb5 (3. Bc4 Bc5) a6 4. Ba4 Nf6 5. O-O *
+1. e4 e5 2. Nf3 Nc6 3. Bb5 (3. Bc4 Bc5) a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O *
+""".strip()
 
-[Event "Italian"]
-[Site "?"]
+E4_ONLY_REP_PGN = """
+[Event "King-pawn only"]
 [Result "*"]
 
-1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 *
+1. e4 *
+""".strip()
+
+BLACK_CARO_REP_PGN = """
+[Event "Caro-Kann"]
+[Result "*"]
+
+1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 *
 """.strip()
 
 
-# Black repertoire: Caro-Kann.
-BLACK_REP_PGN = """
-[Event "Caro-Kann advance"]
-[Result "*"]
-
-1. e4 c6 2. d4 d5 3. e5 Bf5 *
-""".strip()
+def _write(tmp_path: Path, name: str, text: str) -> Path:
+    p = tmp_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
 
 
-def _played_pgn(white: str, black: str, moves: str, result: str = "*") -> str:
-    return (
-        f'[Event "Test"]\n'
-        f'[White "{white}"]\n'
-        f'[Black "{black}"]\n'
-        f'[Result "{result}"]\n\n'
-        f"{moves} {result}\n"
-    )
+def _played_pgn(
+    *,
+    moves: list[str],
+    white: str = "alice",
+    black: str = "bob",
+    site: str = "https://lichess.org/abcd1234",
+) -> str:
+    """Build a played-game PGN with the given SAN sequence."""
+    game = chess.pgn.Game()
+    game.headers["White"] = white
+    game.headers["Black"] = black
+    game.headers["Site"] = site
+    game.headers["Result"] = "*"
+    node = game
+    board = chess.Board()
+    for san in moves:
+        move = board.parse_san(san)
+        node = node.add_variation(move)
+        board.push(move)
+    return str(game)
 
 
-@pytest.fixture
-def white_rep(tmp_path: Path):
-    p = tmp_path / "white.pgn"
-    p.write_text(WHITE_REP_PGN, encoding="utf-8")
-    return load_repertoire(p, "white")
+def _load_rep(tmp_path: Path, pgn_text: str, color: str):
+    """Init DB in tmp dir, load the given repertoire text under `color`."""
+    db = tmp_path / "caissa.sqlite"
+    conn = init_db(db)
+    rep_pgn = _write(tmp_path, f"{color}.pgn", pgn_text)
+    load_repertoire_into_db(conn, rep_pgn, color)
+    return conn, rep_pgn
 
 
-@pytest.fixture
-def black_rep(tmp_path: Path):
-    p = tmp_path / "black.pgn"
-    p.write_text(BLACK_REP_PGN, encoding="utf-8")
-    return load_repertoire(p, "black")
+# ---- Scope F1.2 acceptance ------------------------------------------------
 
-
-# ---- Happy-path: user stays in book --------------------------------------
-
-def test_in_book_full_mainline_no_deviation(white_rep) -> None:
+def test_deviation_on_move_8_returns_move_number_8(tmp_path: Path) -> None:
+    """Spanish mainline through white's move 7, then white plays Bc4 on move 8."""
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
     pgn = _played_pgn(
-        "alex", "opp",
-        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O",
+        moves=[
+            "e4", "e5",
+            "Nf3", "Nc6",
+            "Bb5", "a6",
+            "Ba4", "Nf6",
+            "O-O", "Be7",
+            "Re1", "b5",
+            "Bb3", "d6",
+            "Bc4",  # white's 8th, NOT in repertoire (rep prepares 8.c3)
+        ],
+        white="alice", black="bob",
     )
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is False
-    assert result.deviation_move_number is None
-    assert result.move_played is None
-    assert result.repertoire_line_name == "Spanish mainline"
+    report = diff_game(pgn, "alice", conn)
+
+    assert report.deviation.occurred is True
+    assert report.deviation.deviation_move_number == 8
+    # 8th full move, white's halfmove → ply 15 (white has played 8 plies).
+    assert report.deviation.deviation_ply == 15
+    assert report.deviation.move_played_san == "Bc4"
+    assert report.deviation.fen_before_deviation is not None
+    assert report.deviation.move_played_uci is not None
+    sans = [m.san for m in report.deviation.expected_moves_from_repertoire]
+    assert "c3" in sans
+    assert report.in_book_until_ply == 13  # last in-book user ply was Bb3
+    assert report.user_color == "white"
 
 
-def test_sideline_match_is_not_a_deviation(white_rep) -> None:
-    """User plays the Bc4 sideline; repertoire knows about it."""
-    pgn = _played_pgn("alex", "opp", "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5")
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is False
-
-
-# ---- Deviation detection -------------------------------------------------
-
-def test_deviation_at_user_move_3(white_rep) -> None:
-    """White plays 3. d3 instead of repertoire's Bb5/Bc4."""
-    pgn = _played_pgn("alex", "opp", "1. e4 e5 2. Nf3 Nc6 3. d3")
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is True
-    assert result.deviation_move_number == 3
-    assert result.move_played == "d3"
-    # Mainline-first ordering: Bb5 is the first expected.
-    assert result.move_expected == "Bb5"
-    assert result.repertoire_line_name == "Spanish mainline"
-
-
-def test_deviation_at_user_move_5(white_rep) -> None:
-    """White follows mainline through move 4 then deviates."""
+def test_fully_in_book_returns_no_deviation(tmp_path: Path) -> None:
+    """Player follows the Spanish mainline through move 8 — no deviation."""
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
     pgn = _played_pgn(
-        "alex", "opp",
-        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. d3",
+        moves=[
+            "e4", "e5",
+            "Nf3", "Nc6",
+            "Bb5", "a6",
+            "Ba4", "Nf6",
+            "O-O", "Be7",
+            "Re1", "b5",
+            "Bb3", "d6",
+            "c3", "O-O",
+        ],
+        white="alice", black="bob",
     )
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is True
-    assert result.deviation_move_number == 5
-    assert result.move_played == "d3"
-    assert result.move_expected == "O-O"
+    report = diff_game(pgn, "alice", conn)
+
+    assert report.deviation.occurred is False
+    assert report.deviation.deviation_ply is None
+    assert report.in_book_until_ply == 15
+    assert [m.ply for m in report.moves_in_book] == [1, 3, 5, 7, 9, 11, 13, 15]
 
 
-def test_deviation_at_first_move(white_rep) -> None:
-    pgn = _played_pgn("alex", "opp", "1. d4 d5")
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is True
-    assert result.deviation_move_number == 1
-    assert result.move_played == "d4"
-    assert result.move_expected == "e4"
+def test_immediate_deviation_on_move_1(tmp_path: Path) -> None:
+    """Repertoire prepares only 1.e4; played PGN opens 1.d4."""
+    conn, _ = _load_rep(tmp_path, E4_ONLY_REP_PGN, "white")
+    pgn = _played_pgn(moves=["d4"], white="alice", black="bob")
+    report = diff_game(pgn, "alice", conn)
+
+    assert report.deviation.occurred is True
+    assert report.deviation.deviation_move_number == 1
+    assert report.deviation.deviation_ply == 1
+    assert report.deviation.move_played_san == "d4"
+    assert report.in_book_until_ply == 0
+    assert report.moves_in_book == []
+    assert report.deviation.deepest_repertoire_match_node_id is None
 
 
-def test_deviation_for_black_user(black_rep) -> None:
-    """Black plays 1...e5 instead of Caro-Kann's c6."""
-    pgn = _played_pgn("opp", "alex", "1. e4 e5")
-    result = diff_game(pgn, "alex", black_rep)
-    assert result.deviated is True
-    # Black's first move is still chess move 1.
-    assert result.deviation_move_number == 1
-    assert result.move_played == "e5"
-    assert result.move_expected == "c6"
+# ---- Secondary coverage ---------------------------------------------------
+
+def test_expected_moves_contains_all_alternatives(tmp_path: Path) -> None:
+    """After 1.e4 e5 2.Nf3 Nc6 rep prepares both Bb5 (main) and Bc4 (sideline)."""
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(
+        moves=["e4", "e5", "Nf3", "Nc6", "Nc3"],  # Nc3 is off-rep
+        white="alice", black="bob",
+    )
+    report = diff_game(pgn, "alice", conn)
+    assert report.deviation.occurred is True
+    sans = sorted(m.san for m in report.deviation.expected_moves_from_repertoire)
+    assert sans == ["Bb5", "Bc4"]
 
 
-def test_black_user_in_book_no_deviation(black_rep) -> None:
-    pgn = _played_pgn("opp", "alex", "1. e4 c6 2. d4 d5 3. e5 Bf5")
-    result = diff_game(pgn, "alex", black_rep)
-    assert result.deviated is False
-    assert result.repertoire_line_name == "Caro-Kann advance"
+def test_black_repertoire_flags_blacks_first_off_book_move(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, BLACK_CARO_REP_PGN, "black")
+    pgn = _played_pgn(
+        moves=["e4", "c6", "d4", "e6"],  # 2...e6 is off the Caro
+        white="alice", black="bob",
+    )
+    report = diff_game(pgn, "bob", conn)
+    assert report.user_color == "black"
+    assert report.deviation.occurred is True
+    assert report.deviation.move_played_san == "e6"
+    assert report.deviation.deviation_move_number == 2
+    # Black's 2nd halfmove = ply 4.
+    assert report.deviation.deviation_ply == 4
 
 
-# ---- Opponent novelty (not a user deviation) ----------------------------
-
-def test_opponent_novelty_is_not_user_deviation(white_rep) -> None:
-    """After 1.e4, Black plays the Scandinavian (1...d5). White's
-    repertoire has no entry for this position, so the user simply
-    runs out of book — not a deviation."""
-    pgn = _played_pgn("alex", "opp", "1. e4 d5 2. exd5")
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is False
-    # The line name from the last in-book ply (1.e4 → "Spanish mainline"
-    # since the parser indexed e4 first under Spanish).
-    assert result.repertoire_line_name == "Spanish mainline"
-
-
-def test_game_shorter_than_repertoire(white_rep) -> None:
-    """User plays 4 in-book moves and the game ends. No deviation."""
-    pgn = _played_pgn("alex", "opp", "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6", result="1-0")
-    result = diff_game(pgn, "alex", white_rep)
-    assert result.deviated is False
+def test_opponent_novelty_yields_empty_expected_moves(tmp_path: Path) -> None:
+    """Strict scope reading: opponent off-rep -> user's next halfmove is flagged
+    with empty expected_moves_from_repertoire."""
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(
+        # 1...c5 is not in the rep (rep expects 1...e5). White's 2.Nf3 reaches
+        # a position the rep never indexed.
+        moves=["e4", "c5", "Nf3"],
+        white="alice", black="bob",
+    )
+    report = diff_game(pgn, "alice", conn)
+    assert report.deviation.occurred is True
+    assert report.deviation.expected_moves_from_repertoire == []
 
 
-# ---- Errors --------------------------------------------------------------
+def test_moves_in_book_only_contains_user_halfmoves(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(
+        moves=["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4"],
+        white="alice", black="bob",
+    )
+    report = diff_game(pgn, "alice", conn)
+    assert report.deviation.occurred is False
+    for entry in report.moves_in_book:
+        assert entry.ply % 2 == 1  # white halfmoves only
+        assert entry.user_color == "white"
 
-def test_diff_raises_on_username_not_in_headers(white_rep) -> None:
-    pgn = _played_pgn("someoneelse", "opp", "1. e4 e5")
+
+def test_game_id_extracted_from_site_header(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(
+        moves=["e4"], site="https://lichess.org/abcd1234",
+        white="alice", black="bob",
+    )
+    report = diff_game(pgn, "alice", conn)
+    assert report.game_id == "abcd1234"
+
+
+def test_explicit_game_id_wins_over_site_header(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(moves=["e4"], site="https://lichess.org/abcd1234")
+    report = diff_game(pgn, "alice", conn, game_id="override-123")
+    assert report.game_id == "override-123"
+
+
+def test_game_id_falls_back_to_unknown(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(moves=["e4"], site="")
+    report = diff_game(pgn, "alice", conn)
+    assert report.game_id == "unknown"
+
+
+# ---- Error paths ----------------------------------------------------------
+
+def test_pgn_unparseable_raises_diff_error(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    with pytest.raises(DiffError, match="parsed"):
+        diff_game("not a pgn at all", "alice", conn)
+
+
+def test_username_not_in_headers_raises_diff_error(tmp_path: Path) -> None:
+    conn, _ = _load_rep(tmp_path, SPANISH_REP_PGN, "white")
+    pgn = _played_pgn(moves=["e4"], white="alice", black="bob")
     with pytest.raises(DiffError, match="not found"):
-        diff_game(pgn, "alex", white_rep)
+        diff_game(pgn, "carol", conn)
 
 
-def test_diff_raises_on_color_mismatch(white_rep) -> None:
-    """Played as black, but only the white repertoire is loaded."""
-    pgn = _played_pgn("opp", "alex", "1. e4 c6")
-    with pytest.raises(DiffError, match="white"):
-        diff_game(pgn, "alex", white_rep)
+def test_diff_raises_when_repertoire_missing(tmp_path: Path) -> None:
+    """No rows for this colour AND no PGN file at the explicit path."""
+    db = tmp_path / "caissa.sqlite"
+    conn = init_db(db)
+    pgn = _played_pgn(moves=["e4"], white="alice", black="bob")
+    missing = tmp_path / "no_such_file.pgn"
+    with pytest.raises(RepertoireNotFoundError):
+        diff_game(pgn, "alice", conn, repertoire_path=missing)
 
 
-def test_diff_raises_on_garbage_pgn_via_missing_headers(white_rep) -> None:
-    """Garbage parses to an empty game with no headers — username
-    lookup fails, which is the user-facing error we want."""
-    with pytest.raises(DiffError, match="not found"):
-        diff_game("garbage not pgn at all", "alex", white_rep)
+# ---- ensure_loaded mtime reload (exercised through diff) ------------------
 
+def test_ensure_loaded_reloads_when_file_mtime_newer(tmp_path: Path) -> None:
+    """Editing the source PGN must be picked up on the next diff call."""
+    db = tmp_path / "caissa.sqlite"
+    conn = init_db(db)
+    rep_path = _write(tmp_path, "white.pgn", E4_ONLY_REP_PGN)
+    pgn = _played_pgn(moves=["d4"], white="alice", black="bob")
 
-def test_diff_username_match_is_case_insensitive(white_rep) -> None:
-    pgn = _played_pgn("Alex", "Opp", "1. e4 e5 2. Nf3 Nc6 3. d3")
-    result = diff_game(pgn, "ALEX", white_rep)
-    assert result.deviated is True
-    assert result.move_played == "d3"
+    r1 = diff_game(pgn, "alice", conn, repertoire_path=rep_path)
+    assert r1.deviation.occurred is True
+
+    rep_path.write_text('[Event "QGD"]\n\n1. d4 *\n', encoding="utf-8")
+    new_mtime = time.time() + 2
+    os.utime(rep_path, (new_mtime, new_mtime))
+
+    r2 = diff_game(pgn, "alice", conn, repertoire_path=rep_path)
+    assert r2.deviation.occurred is False

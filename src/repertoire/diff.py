@@ -1,25 +1,35 @@
-"""Module B diff: detect first user deviation from a repertoire.
+"""Module B diff (Feature 1.2): first user deviation from the SQLite repertoire.
 
-Walks the played PGN move-by-move alongside the FEN-keyed
-:class:`~src.repertoire.parser.Repertoire` index produced by Phase 2.
-Reports the **first move** the user played that the repertoire did not
-prepare for, or ``deviated=False`` if the user stayed in book throughout
-(or the repertoire/game simply ran out).
-
-Opponent novelties (a move outside repertoire by the *opponent*) are not
-deviations and do not error — the walk continues; if the resulting
-position is no longer indexed, we exit cleanly with no deviation.
+Walks the played PGN move-by-move. For each user halfmove we look up the
+resulting FEN in ``repertoire_nodes``; the first miss is the deviation.
+Opponent halfmoves are skipped — per scope they're not checked, and if
+the opponent leaves prep the user's next halfmove simply won't find its
+FEN in the store, which surfaces as a deviation with empty
+``expected_moves_from_repertoire``. That edge case is intentional.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import sqlite3
+from pathlib import Path
 
 import chess
 
-from src.repertoire.parser import Repertoire
+from src.repertoire.store import (
+    Color,
+    ensure_loaded,
+    find_expected_moves_from,
+    find_node_by_fen_after,
+)
 from src.shared.chess_utils import extract_user_color, parse_pgn
-from src.shared.schemas import RepertoireDeviation
+from src.shared.schemas import (
+    DeviationDetail,
+    DeviationReport,
+    MoveInBook,
+    RepertoireExpectedMove,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,31 +38,50 @@ class DiffError(Exception):
     """Inputs to :func:`diff_game` could not be reconciled."""
 
 
+# Lichess / Chess.com game id from a [Site] URL header, e.g.
+#   "https://lichess.org/abcd1234"           -> "abcd1234"
+#   "https://www.chess.com/game/live/12345"  -> "12345"
+_GAME_ID_TAIL_RE = re.compile(r"([A-Za-z0-9]+)/?$")
+
+
+def _derive_game_id(pgn_game: chess.pgn.Game, fallback: str = "unknown") -> str:
+    site = pgn_game.headers.get("Site", "").strip()
+    if site:
+        m = _GAME_ID_TAIL_RE.search(site)
+        if m:
+            return m.group(1)
+    # Some PGNs carry an explicit GameId tag.
+    explicit = pgn_game.headers.get("GameId", "").strip()
+    return explicit or fallback
+
+
 def diff_game(
     pgn: str,
     username: str,
-    repertoire: Repertoire,
-) -> RepertoireDeviation:
-    """Compare a played game against a repertoire and report first deviation.
+    conn: sqlite3.Connection,
+    *,
+    game_id: str | None = None,
+    repertoire_path: Path | str | None = None,
+) -> DeviationReport:
+    """Compare a played PGN against the SQLite repertoire for the user's colour.
+
+    The repertoire is lazy-loaded from ``repertoire_path`` (or the default
+    location) if the store has no rows yet, or if the PGN file is newer
+    than the last load.
 
     Args:
-        pgn: Full PGN text of the played game.
-        username: User's username as it appears in the PGN ``[White]`` or
-            ``[Black]`` header. Match is case-insensitive.
-        repertoire: Indexed repertoire whose ``color`` must match the side
-            ``username`` played.
-
-    Returns:
-        :class:`RepertoireDeviation`. ``deviated`` is True only when the
-        user (not opponent) played a move outside their repertoire from a
-        position the repertoire actually covers.
-
-    Raises:
-        DiffError: PGN is unparseable, username not in headers, or
-            repertoire color does not match user's color.
+        pgn: Full PGN of the played game.
+        username: User's username, matched (case-insensitive) against
+            ``[White]`` / ``[Black]`` PGN headers.
+        conn: SQLite connection produced by ``store.init_db``.
+        game_id: Optional override. Auto-derived from ``[Site]`` or
+            ``[GameId]`` if missing.
+        repertoire_path: Optional override for the source PGN to lazy-load.
     """
     game = parse_pgn(pgn)
-    if game is None:
+    # python-chess returns a Game with placeholder "?" headers and zero
+    # moves for garbage input — treat that as unparseable.
+    if game is None or not list(game.mainline_moves()):
         raise DiffError("PGN could not be parsed")
 
     user_color = extract_user_color(pgn, username)
@@ -60,61 +89,87 @@ def diff_game(
         raise DiffError(
             f"Username {username!r} not found in PGN [White]/[Black] headers"
         )
-    if user_color != repertoire.color:
-        raise DiffError(
-            f"Repertoire is for {repertoire.color}, but {username!r} "
-            f"played {user_color}"
-        )
 
+    ensure_loaded(conn, user_color, repertoire_path)
+
+    resolved_game_id = game_id or _derive_game_id(game)
     user_turn = chess.WHITE if user_color == "white" else chess.BLACK
-    board = game.board()
-    last_known_line_name: str | None = None
 
+    moves_in_book: list[MoveInBook] = []
+    in_book_until_ply = 0
+    deepest_match_id: int | None = None
+
+    board = game.board()
     for move in game.mainline_moves():
-        parent_fen = board.fen()
         is_user_turn = board.turn == user_turn
 
-        if is_user_turn:
-            if not repertoire.covers(parent_fen):
-                # User's position never indexed — repertoire ended (or
-                # opponent took us into uncharted territory). Not a
-                # deviation by the user.
-                return _no_deviation(last_known_line_name)
+        if not is_user_turn:
+            board.push(move)
+            continue
 
-            expected = repertoire.expected_at(parent_fen)
-            played_san = board.san(move)
-            match = next((em for em in expected if em.san == played_san), None)
-
-            if match is None:
-                # First user move outside repertoire — this is the deviation.
-                return RepertoireDeviation(
-                    deviated=True,
-                    deviation_move_number=board.fullmove_number,
-                    move_played=played_san,
-                    move_expected=expected[0].san,  # mainline first
-                    fen_at_deviation=parent_fen,
-                    repertoire_line_name=(
-                        expected[0].line_name or last_known_line_name
-                    ),
-                )
-
-            # User stayed in book — track which line they're following.
-            if match.line_name is not None:
-                last_known_line_name = match.line_name
+        fen_before = board.fen()
+        try:
+            san = board.san(move)
+        except (ValueError, AssertionError) as exc:
+            raise DiffError(f"PGN contains illegal move: {move.uci()}") from exc
+        uci = move.uci()
+        move_number_before = board.fullmove_number
 
         board.push(move)
+        fen_after = board.fen()
+        ply_after = board.ply()
 
-    # Game ended with user in book throughout (or out of book via
-    # opponent only). No deviation by the user.
-    return _no_deviation(last_known_line_name)
+        node = find_node_by_fen_after(conn, user_color, fen_after)
+        if node is None:
+            return DeviationReport(
+                game_id=resolved_game_id,
+                user_color=user_color,
+                in_book_until_ply=in_book_until_ply,
+                deviation=DeviationDetail(
+                    occurred=True,
+                    deviation_ply=ply_after,
+                    deviation_move_number=move_number_before,
+                    move_played_san=san,
+                    move_played_uci=uci,
+                    fen_before_deviation=fen_before,
+                    expected_moves_from_repertoire=_expected(
+                        conn, user_color, fen_before
+                    ),
+                    deepest_repertoire_match_node_id=deepest_match_id,
+                ),
+                moves_in_book=moves_in_book,
+            )
 
+        # In book — record and continue.
+        in_book_until_ply = ply_after
+        deepest_match_id = node.id
+        moves_in_book.append(
+            MoveInBook(ply=ply_after, san=san, user_color=user_color)
+        )
 
-def _no_deviation(line_name: str | None) -> RepertoireDeviation:
-    return RepertoireDeviation(
-        deviated=False,
-        deviation_move_number=None,
-        move_played=None,
-        move_expected=None,
-        fen_at_deviation=None,
-        repertoire_line_name=line_name,
+    # Walked the entire game with no user deviation.
+    return DeviationReport(
+        game_id=resolved_game_id,
+        user_color=user_color,
+        in_book_until_ply=in_book_until_ply,
+        deviation=DeviationDetail(
+            occurred=False,
+            deviation_ply=None,
+            deviation_move_number=None,
+            move_played_san=None,
+            move_played_uci=None,
+            fen_before_deviation=None,
+            expected_moves_from_repertoire=[],
+            deepest_repertoire_match_node_id=deepest_match_id,
+        ),
+        moves_in_book=moves_in_book,
     )
+
+
+def _expected(
+    conn: sqlite3.Connection, user_color: Color, fen_before: str
+) -> list[RepertoireExpectedMove]:
+    return [
+        RepertoireExpectedMove(san=em.san, uci=em.uci, line_name=em.line_name)
+        for em in find_expected_moves_from(conn, user_color, fen_before, user_color)
+    ]

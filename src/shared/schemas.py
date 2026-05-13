@@ -33,10 +33,20 @@ class GameMetadata(BaseModel):
     pgn: str
 
 
+class EngineAnalysisInput(BaseModel):
+    eval_cp: int | None = None
+    mate: int | None = None
+    best_move_uci: str
+    best_move_san: str
+    pv: list[str] = []  # UCI strings
+    depth: int | None = None
+
+
 class AdviseRequest(BaseModel):
     fen: str
-    game_url: str | None = None
-    player_color: Literal["white", "black"] | None = None
+    user_color: Literal["white", "black"]
+    engine_analysis: EngineAnalysisInput | None = None
+    game_phase_hint: Literal["opening", "middlegame", "endgame"] | None = None
 
 
 class BookCitation(BaseModel):
@@ -45,26 +55,56 @@ class BookCitation(BaseModel):
     snippet: str
 
 
+class EngineInputEcho(BaseModel):
+    eval_cp: int | None = None
+    mate: int | None = None
+    best_move_san: str
+
+
 class AdviseResponse(BaseModel):
     fen: str
     explanation: str
     citations: list[BookCitation]
     classifier_tags: list[str]
-    model_used: Literal["gemma_local", "anthropic_fallback"]
+    model_used: Literal["local", "openrouter", "openai"]
+    engine_input_echo: EngineInputEcho
 
 
 class RepertoireDiffRequest(BaseModel):
     pgn: str
     username: str
+    game_id: str | None = None
 
 
-class RepertoireDeviation(BaseModel):
-    deviated: bool
+class MoveInBook(BaseModel):
+    ply: int
+    san: str
+    user_color: Literal["white", "black"]
+
+
+class RepertoireExpectedMove(BaseModel):
+    san: str
+    uci: str
+    line_name: str | None
+
+
+class DeviationDetail(BaseModel):
+    occurred: bool
+    deviation_ply: int | None
     deviation_move_number: int | None
-    move_played: str | None
-    move_expected: str | None
-    fen_at_deviation: str | None
-    repertoire_line_name: str | None
+    move_played_san: str | None
+    move_played_uci: str | None
+    fen_before_deviation: str | None
+    expected_moves_from_repertoire: list[RepertoireExpectedMove]
+    deepest_repertoire_match_node_id: int | None
+
+
+class DeviationReport(BaseModel):
+    game_id: str
+    user_color: Literal["white", "black"]
+    in_book_until_ply: int
+    deviation: DeviationDetail
+    moves_in_book: list[MoveInBook]
 
 
 class EvalRequest(BaseModel):

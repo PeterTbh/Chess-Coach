@@ -15,7 +15,12 @@ import chess.svg
 import httpx
 import streamlit as st
 
+from src.ui.components.explain_panel import render_explain_panel
 from src.ui.components.game_walker import PlyView, walk_pgn
+from src.ui.components.repertoire_panel import (
+    filter_user_halfmoves,
+    render_deviation_panel,
+)
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 FETCH_TIMEOUT_SECONDS = 15.0
@@ -154,12 +159,28 @@ if game:
     with st.expander("PGN"):
         st.code(game["pgn"], language="text")
 
-    # ---- Move navigation + board ------------------------------------------
+    # ---- Walk plies once; reused by Panel 1 + position viewer + Panel 2 --
 
     plies = _walk_pgn_cached(game["pgn"])
     if not plies:
         st.warning("PGN could not be walked — no moves to navigate.")
     else:
+        # ---- Panel 1: Repertoire deviation -------------------------------
+
+        st.divider()
+
+        if "diff" not in st.session_state:
+            user_color = game["user_color"]
+            username = game[f"{user_color}_username"]
+            with st.spinner(f"Comparing against {user_color}.pgn…"):
+                st.session_state["diff"] = _post_diff(game["pgn"], username)
+
+        diff = st.session_state.get("diff")
+        user_halfmoves = filter_user_halfmoves(plies, game["user_color"])
+        render_deviation_panel(diff, user_halfmoves, game["user_color"])
+
+        # ---- Position viewer (slider + board) ----------------------------
+
         st.divider()
         st.subheader("Position viewer")
 
@@ -194,38 +215,6 @@ if game:
             st.caption(f"FEN: `{view.fen}`")
             if view.move_uci:
                 st.caption(f"Last move: `{view.move_uci}`")
-
-        # ---- Panel 1: Repertoire deviation -------------------------------
-
-        st.divider()
-        st.subheader("Panel 1 — Repertoire deviation")
-
-        if "diff" not in st.session_state:
-            user_color = game["user_color"]
-            username = game[f"{user_color}_username"]
-            with st.spinner(f"Comparing against {user_color}.pgn…"):
-                st.session_state["diff"] = _post_diff(game["pgn"], username)
-
-        diff = st.session_state.get("diff")
-        if diff is None:
-            st.caption(
-                "Place your repertoire at "
-                "`data/repertoires/white.pgn` or `black.pgn` to enable."
-            )
-        elif diff["deviated"]:
-            st.error(
-                f"**Deviated on move {diff['deviation_move_number']}** — "
-                f"you played **{diff['move_played']}**, "
-                f"repertoire prepares **{diff['move_expected']}** "
-                f"(line: *{diff.get('repertoire_line_name') or 'unknown'}*)."
-            )
-            with st.expander("FEN at deviation"):
-                st.code(diff["fen_at_deviation"])
-        else:
-            line_name = diff.get("repertoire_line_name") or "unknown"
-            st.success(
-                f"In book throughout — last known line: **{line_name}**."
-            )
 
         # ---- Panel 2: Engine evaluation ----------------------------------
 
@@ -275,12 +264,17 @@ if game:
                 use_container_width=True,
             )
 
+        # ---- Panel 3: Strategic commentary -------------------------------
 
-# ---- Panel 3: stub --------------------------------------------------------
-
-st.divider()
-st.subheader("Panel 3 — Strategic commentary")
-st.caption("Wiring up in Phase 4 (RAG over book corpus + Anthropic fallback).")
+        st.divider()
+        render_explain_panel(
+            api_url=API_URL,
+            game=game,
+            plies=plies,
+            user_halfmoves=user_halfmoves,
+            diff=diff,
+            evals=st.session_state.get("evals"),
+        )
 
 
 # ---- Footer: API health ---------------------------------------------------
