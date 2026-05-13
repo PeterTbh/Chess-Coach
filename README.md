@@ -119,13 +119,19 @@ data/repertoires/white.pgn   # your repertoire when playing White
 data/repertoires/black.pgn   # your repertoire when playing Black
 ```
 
+A **sample Catalan repertoire** ships at `data/repertoires/white.pgn`
+(four chapters, 60 indexed positions) so Panel 1 is immediately
+testable. Replace it with your own when you have one — same path,
+same format. The black side is left unset on purpose: drop your own
+`black.pgn` next to it.
+
 Each file may contain a single PGN game with sub-tree variations, or
 multiple concatenated games (one per chapter / opening). Export from
-Lichess Studies or hand-write them; SQLite indexing is automatic on the
-next `/repertoire/diff` request.
+Lichess Studies or hand-write them; SQLite indexing is automatic on
+the next `/repertoire/diff` request.
 
-The store reloads from disk whenever the PGN file's `mtime` is newer than
-the last indexed version — edit and re-run.
+The store reloads from disk whenever the PGN file's `mtime` is newer
+than the last indexed version — edit and re-run.
 
 ### 5. Run
 

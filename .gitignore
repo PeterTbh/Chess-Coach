@@ -1,11 +1,13 @@
 # Caissa — gitignore
 
 # User data (kept local)
-data/repertoires/
+data/repertoires/*
 data/chroma/
 
-# Allow .gitkeep markers + the committed seed corpus
+# Allow .gitkeep markers, the committed seed corpus, and the sample
+# Catalan white repertoire that ships with the repo.
 !data/repertoires/.gitkeep
+!data/repertoires/white.pgn
 !data/corpus_seed.json
 
 # Generated file types
