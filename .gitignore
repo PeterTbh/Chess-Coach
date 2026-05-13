@@ -1,5 +1,8 @@
 # Caissa — gitignore
 
+# Scraper folder
+Scraper/
+
 # User data (kept local)
 data/repertoires/*
 data/chroma/
