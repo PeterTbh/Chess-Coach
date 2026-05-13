@@ -189,15 +189,32 @@ def app_test() -> AppTest:
     return at
 
 
-def test_panel_renders_deviation_without_error(app_test: AppTest) -> None:
+def _mock_diff_deviation_with_alternatives() -> dict[str, Any]:
+    """Deviation on white's 8th move with TWO prepared alternatives."""
+    base = _mock_diff_deviation()
+    base["deviation"]["expected_moves_from_repertoire"] = [
+        {"san": "c3", "uci": "c2c3", "line_name": "Spanish mainline"},
+        {"san": "Nc3", "uci": "b1c3", "line_name": "Sideline"},
+    ]
+    return base
+
+
+def _mock_diff_opponent_novelty() -> dict[str, Any]:
+    """Deviation where the rep prepared nothing (opponent left book first)."""
+    base = _mock_diff_deviation()
+    base["deviation"]["expected_moves_from_repertoire"] = []
+    return base
+
+
+def test_panel_renders_deviation_with_moves_in_prep_banner(app_test: AppTest) -> None:
+    """Banner uses the 'N moves in prep' wording."""
     app_test.session_state["game"] = _mock_game()
     app_test.session_state["diff"] = _mock_diff_deviation()
     app_test.run()
     assert not app_test.exception
-
-    # The scope header copy should appear somewhere in the output.
     error_texts = [el.value for el in app_test.error]
-    assert any("deviated" in t.lower() and "move" in t.lower() for t in error_texts)
+    # 7 user halfmoves in book before deviating on the 8th.
+    assert any("7 moves in prep" in t for t in error_texts)
 
 
 def test_panel_renders_fully_in_book_without_error(app_test: AppTest) -> None:
@@ -205,21 +222,52 @@ def test_panel_renders_fully_in_book_without_error(app_test: AppTest) -> None:
     app_test.session_state["diff"] = _mock_diff_fully_in_book()
     app_test.run()
     assert not app_test.exception
-
     success_texts = [el.value for el in app_test.success]
     assert any("stayed in prep through move 8" in t for t in success_texts)
 
 
-def test_move_button_click_updates_session_ply(app_test: AppTest) -> None:
-    """Clicking the deviation move's button jumps the position viewer to ply 15."""
+def test_alternatives_dropdown_shown_when_multiple(app_test: AppTest) -> None:
+    """When the rep has 2+ alternatives, a selectbox lets the user pick."""
+    app_test.session_state["game"] = _mock_game()
+    app_test.session_state["diff"] = _mock_diff_deviation_with_alternatives()
+    app_test.run()
+    assert not app_test.exception
+    keys = [s.key for s in app_test.selectbox if s.key]
+    assert "panel1_alt_select" in keys
+
+
+def test_no_dropdown_when_single_alternative(app_test: AppTest) -> None:
+    """Single prepared move → render both boards directly, no selectbox."""
     app_test.session_state["game"] = _mock_game()
     app_test.session_state["diff"] = _mock_diff_deviation()
     app_test.run()
     assert not app_test.exception
+    keys = [s.key for s in app_test.selectbox if s.key]
+    assert "panel1_alt_select" not in keys
 
-    # Each user halfmove gets a button keyed "panel1_move_<ply>".
-    target_key = "panel1_move_15"
-    target = next((b for b in app_test.button if b.key == target_key), None)
-    assert target is not None, f"button {target_key} not found"
-    target.click().run()
-    assert app_test.session_state["ply"] == 15
+
+def test_opponent_novelty_skips_right_board(app_test: AppTest) -> None:
+    """No prepared moves → don't render the right board (decision #5: skip)."""
+    app_test.session_state["game"] = _mock_game()
+    app_test.session_state["diff"] = _mock_diff_opponent_novelty()
+    app_test.run()
+    assert not app_test.exception
+    # The "Repertoire:" caption only appears when the right board renders.
+    markdown_texts = " ".join(
+        m.value for m in app_test.markdown if isinstance(m.value, str)
+    )
+    assert "Repertoire:" not in markdown_texts
+    assert "You played:" in markdown_texts
+
+
+def test_immediate_deviation_uses_first_move_wording(app_test: AppTest) -> None:
+    """N=0 prep-moves case gets a friendlier banner."""
+    app_test.session_state["game"] = _mock_game()
+    diff = _mock_diff_deviation()
+    diff["moves_in_book"] = []
+    diff["in_book_until_ply"] = 0
+    app_test.session_state["diff"] = diff
+    app_test.run()
+    assert not app_test.exception
+    error_texts = [el.value for el in app_test.error]
+    assert any("first move" in t.lower() for t in error_texts)

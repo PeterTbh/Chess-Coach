@@ -1,7 +1,9 @@
 """Panel 1 — Repertoire deviation (Feature 1.3).
 
-Renders header + clickable user-halfmove list (green/red/grey) + the
-position at ``fen_before_deviation`` + a played-vs-expected table.
+Renders header + a two-board side-by-side comparison: the wrong move you
+played (left, red highlight) vs. the repertoire's prepared move (right,
+green highlight). When the repertoire prepares multiple alternatives a
+selectbox above the boards picks which one to show.
 
 The classifier helper is intentionally pure (no Streamlit), so it can be
 unit-tested in isolation.
@@ -19,13 +21,9 @@ from src.ui.components.game_walker import PlyView
 
 HalfmoveStatus = Literal["in_book", "deviation", "after"]
 
-_STATUS_DOT: dict[HalfmoveStatus, str] = {
-    "in_book": "🟢",
-    "deviation": "🔴",
-    "after": "⚪",
-}
-
-_BUTTONS_PER_ROW = 4
+_TINT_RED = "#ff6b6b"
+_TINT_GREEN = "#51cf66"
+_BOARD_SIZE = 300
 
 
 def classify_halfmove(
@@ -53,22 +51,23 @@ def filter_user_halfmoves(
     return [p for p in all_plies if p.ply > 0 and p.ply % 2 == parity]
 
 
-def _render_board_svg(fen: str, last_move_uci: str | None = None) -> str:
-    board = chess.Board(fen)
-    last_move = chess.Move.from_uci(last_move_uci) if last_move_uci else None
-    return chess.svg.board(board, lastmove=last_move, size=380, coordinates=True)
+def _render_move_board(
+    fen_before: str, uci: str, tint: str, *, size: int = _BOARD_SIZE
+) -> str:
+    """Render position **after** the move with from/to squares painted in ``tint``."""
+    board = chess.Board(fen_before)
+    move = chess.Move.from_uci(uci)
+    if move in board.legal_moves:
+        board.push(move)
+    fill = {move.from_square: tint, move.to_square: tint}
+    return chess.svg.board(board, fill=fill, size=size, coordinates=True)
 
 
 def render_deviation_panel(
     diff: dict[str, Any] | None,
-    user_halfmoves: list[PlyView],
     user_color: str,
 ) -> None:
-    """Render Panel 1 in place. Side-effect-only.
-
-    Mutates ``st.session_state["ply"]`` when a move button is clicked and
-    triggers a rerun so the position viewer below picks up the new ply.
-    """
+    """Render Panel 1 in place. Side-effect-only."""
     st.subheader("Panel 1 — Repertoire deviation")
 
     if diff is None:
@@ -80,14 +79,18 @@ def render_deviation_panel(
 
     deviation = diff["deviation"]
     in_book_until = int(diff.get("in_book_until_ply", 0))
-    deviation_ply: int | None = deviation.get("deviation_ply")
+    moves_in_book = diff.get("moves_in_book") or []
 
     # ---- Header banner --------------------------------------------------
     if deviation["occurred"]:
-        st.error(
-            f"You deviated from your **{user_color}** repertoire on move "
-            f"**{deviation['deviation_move_number']}**."
-        )
+        n = len(moves_in_book)
+        if n == 0:
+            st.error(f"You deviated from your **{user_color}** repertoire on your first move.")
+        elif n == 1:
+            st.error("You played **1 move in prep** before deviating.")
+        else:
+            st.error(f"You played **{n} moves in prep** before deviating.")
+        _render_deviation_detail(deviation)
     else:
         last_move_number = (in_book_until + 1) // 2
         if last_move_number > 0:
@@ -95,70 +98,62 @@ def render_deviation_panel(
         else:
             st.info("No user moves recorded yet.")
 
-    # ---- Move list ------------------------------------------------------
-    if user_halfmoves:
-        _render_move_buttons(
-            user_halfmoves,
-            in_book_until_ply=in_book_until,
-            deviation_ply=deviation_ply,
-        )
-    else:
-        st.caption("No user halfmoves in this PGN.")
-
-    # ---- Board + comparison table (only on deviation) -------------------
-    if deviation["occurred"]:
-        _render_deviation_detail(deviation)
-
-
-def _render_move_buttons(
-    halfmoves: list[PlyView],
-    *,
-    in_book_until_ply: int,
-    deviation_ply: int | None,
-) -> None:
-    """Grid of buttons, one per user halfmove. Click → jump position viewer."""
-    rows = [
-        halfmoves[i : i + _BUTTONS_PER_ROW]
-        for i in range(0, len(halfmoves), _BUTTONS_PER_ROW)
-    ]
-    clicked_ply: int | None = None
-    for row in rows:
-        cols = st.columns(_BUTTONS_PER_ROW)
-        for col, view in zip(cols, row, strict=False):
-            status = classify_halfmove(view.ply, in_book_until_ply, deviation_ply)
-            dot = _STATUS_DOT[status]
-            move_number = (view.ply + 1) // 2
-            label = f"{dot} {move_number}. {view.san}"
-            key = f"panel1_move_{view.ply}"
-            if col.button(label, key=key, use_container_width=True):
-                clicked_ply = view.ply
-
-    if clicked_ply is not None:
-        st.session_state["ply"] = clicked_ply
-        st.rerun()
-
 
 def _render_deviation_detail(deviation: dict[str, Any]) -> None:
     fen_before = deviation.get("fen_before_deviation")
-    if not fen_before:
+    played_san = deviation.get("move_played_san") or "?"
+    played_uci = deviation.get("move_played_uci")
+    expected = deviation.get("expected_moves_from_repertoire") or []
+
+    if not fen_before or not played_uci:
         return
 
-    board_col, table_col = st.columns([1, 1])
-    with board_col:
-        st.markdown(_render_board_svg(fen_before), unsafe_allow_html=True)
-        st.caption("Position before your move.")
+    # Pick which alternative to display on the right.
+    selected = _select_alternative(expected)
 
-    with table_col:
-        played = deviation.get("move_played_san") or "—"
-        st.markdown(f"**You played:** `{played}`")
-        expected = deviation.get("expected_moves_from_repertoire") or []
-        if expected:
-            st.markdown("**Repertoire prepares:**")
-            for m in expected:
-                line = m.get("line_name")
-                suffix = f" *({line})*" if line else ""
-                st.markdown(f"- **{m['san']}**{suffix}")
-        else:
-            st.markdown(
-                "_Opponent left prep first — no prepared move from this position._"
-            )
+    # Layout: two boards if expected available, single board otherwise.
+    if selected is None:
+        st.markdown(
+            _render_move_board(fen_before, played_uci, _TINT_RED),
+            unsafe_allow_html=True,
+        )
+        st.markdown(f"You played: **{played_san}**")
+        return
+
+    left_col, right_col = st.columns([1, 1])
+    with left_col:
+        st.markdown(
+            _render_move_board(fen_before, played_uci, _TINT_RED),
+            unsafe_allow_html=True,
+        )
+        st.markdown(f"You played: **{played_san}**")
+    with right_col:
+        st.markdown(
+            _render_move_board(fen_before, selected["uci"], _TINT_GREEN),
+            unsafe_allow_html=True,
+        )
+        line = selected.get("line_name")
+        suffix = f" *({line})*" if line else ""
+        st.markdown(f"Repertoire: **{selected['san']}**{suffix}")
+
+
+def _select_alternative(expected: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the chosen alternative; ``None`` if the list is empty.
+
+    Surfaces a selectbox above the boards when there is more than one option.
+    """
+    if not expected:
+        return None
+    if len(expected) == 1:
+        return expected[0]
+    labels = [
+        f"{m['san']}" + (f" ({m['line_name']})" if m.get("line_name") else "")
+        for m in expected
+    ]
+    idx = st.selectbox(
+        "Choose repertoire alternative:",
+        options=list(range(len(expected))),
+        format_func=lambda i: labels[i],
+        key="panel1_alt_select",
+    )
+    return expected[idx]

@@ -177,7 +177,7 @@ if game:
 
         diff = st.session_state.get("diff")
         user_halfmoves = filter_user_halfmoves(plies, game["user_color"])
-        render_deviation_panel(diff, user_halfmoves, game["user_color"])
+        render_deviation_panel(diff, game["user_color"])
 
         # ---- Position viewer (slider + board) ----------------------------
 
