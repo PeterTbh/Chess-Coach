@@ -29,9 +29,3 @@ def test_validate_starting_fen() -> None:
 
 def test_validate_garbage_fen() -> None:
     assert validate_fen("not a fen") is False
-
-
-def test_youtube_stub_is_deferred() -> None:
-    resp = client.get("/youtube_search")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "deferred"

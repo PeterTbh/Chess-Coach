@@ -24,10 +24,7 @@ from src.shared.settings import settings
 
 logger = logging.getLogger(__name__)
 
-MODEL_USED_OPENROUTER = "openrouter"
 MODEL_USED_OPENAI = "openai"
-# Back-compat alias for code that still references the old constant name.
-MODEL_USED: str = MODEL_USED_OPENROUTER
 
 # ---- Errors --------------------------------------------------------------
 
@@ -213,7 +210,7 @@ def _pv_to_san_string(fen: str, engine: EngineAnalysis) -> str:
     return " ".join(sans) if sans else "(none)"
 
 
-# ---- OpenRouter client ---------------------------------------------------
+# ---- OpenAI client -------------------------------------------------------
 
 
 class _ChatClient(Protocol):
@@ -222,21 +219,21 @@ class _ChatClient(Protocol):
     ) -> str: ...
 
 
-class _OpenAICompatibleClient:
-    """Shared base for OpenRouter + OpenAI (same SDK, different base URLs)."""
-
-    _PROVIDER_LABEL = "provider"
+class OpenAIClient:
+    """OpenAI Chat Completions wrapper. Heavy SDK import is lazy."""
 
     def __init__(
         self,
         *,
-        api_key: str,
-        base_url: str,
-        timeout: float,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float | None = None,
     ) -> None:
-        self._api_key = api_key
-        self._base_url = base_url
-        self._timeout = timeout
+        self._api_key = api_key if api_key is not None else settings.openai_api_key
+        self._base_url = base_url or settings.openai_base_url
+        self._timeout = (
+            timeout if timeout is not None else settings.openai_timeout_seconds
+        )
         self._client: Any = None
 
     def is_configured(self) -> bool:
@@ -245,7 +242,7 @@ class _OpenAICompatibleClient:
     def _load(self) -> Any:
         if self._client is None:
             if not self._api_key:
-                raise LlmApiError(f"{self._PROVIDER_LABEL} API key is not configured")
+                raise LlmApiError("OpenAI API key is not configured")
             from openai import OpenAI  # heavy import deferred
             self._client = OpenAI(
                 api_key=self._api_key,
@@ -263,51 +260,11 @@ class _OpenAICompatibleClient:
                 messages=messages,
             )
         except Exception as exc:  # openai raises a tree of subclasses
-            raise LlmApiError(f"{self._PROVIDER_LABEL} call failed: {exc}") from exc
+            raise LlmApiError(f"OpenAI call failed: {exc}") from exc
         try:
             return response.choices[0].message.content or ""
         except (AttributeError, IndexError) as exc:
-            raise LlmApiError(
-                f"{self._PROVIDER_LABEL} response shape unexpected: {response!r}"
-            ) from exc
-
-
-class OpenRouterClient(_OpenAICompatibleClient):
-    """Thin wrapper over the OpenAI SDK pointed at OpenRouter."""
-
-    _PROVIDER_LABEL = "OpenRouter"
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        timeout: float | None = None,
-    ) -> None:
-        super().__init__(
-            api_key=api_key if api_key is not None else settings.openrouter_api_key,
-            base_url=base_url or settings.openrouter_base_url,
-            timeout=timeout if timeout is not None else settings.openrouter_timeout_seconds,
-        )
-
-
-class OpenAIClient(_OpenAICompatibleClient):
-    """Direct OpenAI API client used as the fallback when OpenRouter fails."""
-
-    _PROVIDER_LABEL = "OpenAI"
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        timeout: float | None = None,
-    ) -> None:
-        super().__init__(
-            api_key=api_key if api_key is not None else settings.openai_api_key,
-            base_url=base_url or settings.openai_base_url,
-            timeout=timeout if timeout is not None else settings.openai_timeout_seconds,
-        )
+            raise LlmApiError(f"OpenAI response shape unexpected: {response!r}") from exc
 
 
 # ---- Main entry ----------------------------------------------------------
@@ -356,16 +313,12 @@ def generate_explanation(
     *,
     openai_client: OpenAIClient | _ChatClient | None = None,
     openai_model: str | None = None,
-    # Kept for back-compat with older test call sites. Ignored.
-    openrouter_client: _ChatClient | None = None,  # noqa: ARG001
-    openrouter_model: str | None = None,  # noqa: ARG001
 ) -> LlmResult:
     """Generate a strategic explanation through OpenAI.
 
-    OpenRouter has been cut from the active path — it was rate-limited
-    upstream on the free Gemma tier often enough that the resulting SDK
-    retries timed out the UI. The :class:`OpenRouterClient` is still
-    available in this module for callers that want to wire it back later.
+    The call runs once, then once more on a hallucination violation, then
+    raises :class:`LlmHallucinationError`. API failures bubble up as
+    :class:`LlmApiError` with the underlying message.
     """
     client = openai_client if openai_client is not None else OpenAIClient()
     model = openai_model or settings.openai_model

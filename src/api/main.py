@@ -46,7 +46,6 @@ from src.shared.schemas import (
     GameMetadata,
     HealthResponse,
     RepertoireDiffRequest,
-    YouTubeSearchResponse,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -181,10 +180,3 @@ def game_fetch(req: GameFetchRequest) -> GameMetadata:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/youtube_search", response_model=YouTubeSearchResponse)
-def youtube_search() -> YouTubeSearchResponse:
-    """Module E is deferred. Returns a stable deferral payload."""
-    return YouTubeSearchResponse(
-        status="deferred",
-        use_chessvision_extension_for_now=True,
-    )

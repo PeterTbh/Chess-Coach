@@ -129,8 +129,3 @@ class GameEvalSeries(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
-
-
-class YouTubeSearchResponse(BaseModel):
-    status: Literal["deferred"]
-    use_chessvision_extension_for_now: bool

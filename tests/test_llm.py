@@ -16,7 +16,6 @@ from src.advisor.llm import (
     LlmRequest,
     LlmResult,
     OpenAIClient,
-    OpenRouterClient,
     allowed_moves_from_engine,
     build_user_prompt,
     extract_san_tokens,
@@ -262,21 +261,11 @@ def test_model_id_passed_through() -> None:
     assert client.calls[0]["model"] == "custom/test-model"
 
 
-# ---- OpenRouterClient error path ----------------------------------------
-
-def test_openrouter_raises_when_api_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.advisor import llm as llm_mod
-    monkeypatch.setattr(llm_mod.settings, "openrouter_api_key", "")
-    cli = OpenRouterClient(api_key="")
-    with pytest.raises(LlmApiError, match="OpenRouter API key is not configured"):
-        cli.chat_completions_create(
-            model="google/gemma-4-31b-it:free",
-            messages=[{"role": "user", "content": "hi"}],
-        )
+# ---- OpenAIClient sanity -----------------------------------------------
 
 
-def test_openrouter_wraps_sdk_exceptions(monkeypatch: pytest.MonkeyPatch) -> None:
-    cli = OpenRouterClient(api_key="dummy-test-key")
+def test_openai_client_wraps_sdk_exceptions() -> None:
+    cli = OpenAIClient(api_key="dummy-test-key")
 
     class _Boom:
         class chat:  # noqa: N801
@@ -287,9 +276,6 @@ def test_openrouter_wraps_sdk_exceptions(monkeypatch: pytest.MonkeyPatch) -> Non
     cli._client = _Boom()  # bypass lazy load
     with pytest.raises(LlmApiError, match="boom"):
         cli.chat_completions_create(model="m", messages=[])
-
-
-# ---- OpenAIClient sanity -----------------------------------------------
 
 def test_openai_client_reports_not_configured_when_key_empty() -> None:
     cli = OpenAIClient(api_key="")

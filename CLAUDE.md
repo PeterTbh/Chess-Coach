@@ -1,136 +1,103 @@
 # CLAUDE.md — Caissa
 
-**Current status: Phase 2 in progress (foundations: game fetcher + repertoire parser).**
+**Status: shipped.** Three-panel post-mortem app works end-to-end. Tests pass at
+204, ruff clean.
 
 ## Mission
 
-Build a local, single-user chess post-mortem tool. After playing on Lichess or
-Chess.com, the user opens the local Streamlit app, pastes the game URL, and
-sees three stacked panels:
+Local, single-user chess post-mortem tool. The user pastes a Lichess game URL,
+the Streamlit UI renders three stacked panels:
 
-1. Where they left their opening prep (repertoire diff against
-   `data/repertoires/white.pgn` or `black.pgn`).
-2. Where they went wrong tactically/positionally (Lichess Cloud Eval API,
-   fallback local Stockfish for chess.com positions).
-3. What the position was actually about (fine-tuned Gemma 4 E4B trained on a
-   curated corpus of English-language chess strategy books, with Anthropic API
-   fallback).
+1. **Repertoire deviation** — first move the user left their prep
+   (`data/repertoires/{white,black}.pgn`), with the alternatives the rep
+   actually prepared.
+2. **Engine evaluation** — Lichess Cloud Eval primary, local Stockfish 18
+   silent fallback. Per-ply cp graph plus current-position metric.
+3. **Strategic commentary** — for a handful of critical moments (the
+   deviation plus the biggest eval drops), a 150-250-word neutral analytical
+   explanation, grounded in a small RAG corpus of canonical chess strategy
+   passages and citing the source + page.
 
-The intellectual contribution is the integration architecture and the extracted
-book corpus, not novel ML research.
+## Architecture
 
-## Modules (v1)
+Two host processes on localhost:
 
-- **A — Strategic Advisor (CORE).** FEN → rule-based position classifier →
-  RAG over book corpus → LLM (Gemma local primary, Anthropic fallback) →
-  formatted explanation with citations. Voice: neutral analytical, English,
-  ~1500–2000 ELO. No personalization.
-- **B — Repertoire Deviation Detector.** PGN game vs. exactly two PGN files
-  per user (`white.pgn`, `black.pgn`). Walk both move lists in parallel until
-  divergence; report move number, move played, move expected. The user
-  supplies `data/repertoires/{white,black}.pgn` themselves (Lichess Studies
-  export, hand-written PGN, etc.); Caissa consumes whatever's at those paths.
-- **C — Chessable export.** **Paused.** Chessable has no export and
-  scraping violates ToS. Caissa expects user-supplied PGNs at
-  `data/repertoires/{white,black}.pgn`. Revisit only if Chessable opens an
-  official export API.
-- **D — Streamlit Web App.** Localhost:8501. URL input → PGN fetch → three
-  panels. Board rendered via `streamlit.components.v1` with chessboard.js.
-  Aggressive `st.cache_data` keyed by `(FEN, classifier_tags)`.
-- **E — YouTube reverse search.** **Deferred.** `/youtube_search` returns a
-  stub deferral payload.
+- **FastAPI** (`:8000`) — `src/api/main.py`. Routes: `/health`,
+  `/game/fetch`, `/repertoire/diff`, `/eval`, `/advise`.
+- **Streamlit** (`:8501`) — `src/ui/streamlit_app.py` + panel components.
 
-## Build Order (phases)
+The UI talks to the backend over HTTP; nothing else listens on those ports.
 
-1. **Phase 1 — Scaffold (THIS PHASE).** Repo structure, Docker, FastAPI
-   stubs, Streamlit landing, schemas, chess_utils.
-   *Acceptance:* `docker compose up` works, `/health` 200, Streamlit loads.
-2. **Phase 2 — Foundations.** Game fetcher (Lichess + Chess.com), URL input
-   metadata display, Module B PGN parser.
-3. **Phase 3 — Scale & Engine Source.** PDF extraction pipeline (1 book →
-   top 50, ≥5,000 rows). Module B diff logic. Lichess Cloud Eval client.
-4. **Phase 4 — RAG & Wire-Up.** ChromaDB indexed. `/advise` returns valid
-   `AdviseResponse` via Anthropic fallback. All three panels render.
-5. **Phase 5 — SHIP GATE.** End-to-end Lichess + Chess.com flows.
-   *Failure cut:* drop chess.com, do not start fine-tune.
-6. **Phase 6 — Fine-tune Dataset.** ~2,000 instruction pairs, ≤€15.
-7. **Phase 7 — QLoRA Fine-tune.** Unsloth on Colab Pro, 2–4 hours. Save
-   adapter, convert to GGUF.
-8. **Phase 8 — Local Inference Swap.** Module A primary = llama.cpp,
-   fallback = Anthropic. Side-by-side toggle.
-9. **Phase 9 — Edge Cases & Hardening.** PGN edge cases, error handling,
-   5 real games end-to-end.
-10. **Phase 10 — Polish & Demo.** UI tightening, operational README, demo
-    video (3–5 min, 2–3 takes).
+## Tech stack
 
-## Tech Stack (locked)
+| Layer | Choice |
+|---|---|
+| Python | 3.11 + uv |
+| Backend | FastAPI + Uvicorn |
+| UI | Streamlit, board rendering via `chess.svg` |
+| Repertoire store | SQLite (`data/caissa.sqlite`) |
+| Engine | Lichess Cloud Eval → local Stockfish 18 (host binary, `STOCKFISH_PATH`) |
+| Vector DB | ChromaDB persistent client at `data/chroma/` (embedded, not the dockerised server) |
+| Embeddings | `BAAI/bge-small-en-v1.5` via sentence-transformers |
+| LLM | OpenAI `gpt-5-mini` via the openai SDK |
+| PGN | python-chess |
+| Game APIs | Lichess Open API, Chess.com Public Data |
 
-| Layer        | Choice                                                  |
-|--------------|---------------------------------------------------------|
-| Python       | 3.11 + uv                                               |
-| PDF          | PyMuPDF                                                 |
-| Engine       | Stockfish 17 (Docker fallback) + Lichess Cloud Eval     |
-| Vision       | gudbrandtandberg/ChessVision (later)                    |
-| Embeddings   | bge-small-en-v1.5                                       |
-| Vector DB    | ChromaDB (Docker)                                       |
-| LLM dev      | Anthropic API (Sonnet 4.6)                              |
-| LLM prod     | llama.cpp + GGUF Gemma 4 E4B (host, not Docker)         |
-| Fine-tune    | Unsloth + QLoRA on Colab Pro                            |
-| Backend      | FastAPI + Uvicorn (Docker)                              |
-| UI           | Streamlit (Docker, 8501)                                |
-| Game APIs    | Lichess Open API, Chess.com Public Data¹                |
-| PGN          | python-chess                                            |
-| Board render | `streamlit.components.v1` + chessboard.js               |
+## Modules (current)
 
-LLM inference runs on the Mac host (Apple Silicon Metal not available inside
-Docker). Everything else is Docker Compose.
+- **A — Strategic Advisor.** `src/advisor/`. Pipeline: `classify(FEN) →
+  retrieve top-3 → LLM with anti-hallucination retry → AdviseResponse`.
+  Classifier is rule-based (~10 structural tags); corpus is the
+  hand-written seed at `data/corpus_seed.json`.
+- **B — Repertoire Deviation Detector.** `src/repertoire/`. SQLite-backed,
+  walks the played PGN halfmove-by-halfmove against the user's rep,
+  emits `DeviationReport`.
+- **D — Streamlit UI.** `src/ui/`. Three panels + position viewer.
 
-¹ `openingtree/openingtree` (JS/React SPA) is **read-only reference** for
-bulk-fetch URL construction patterns (Lichess filters, Chess.com archives
-walker). Not a runtime dependency. Phase 2 implements single-game fetch
-directly with `httpx`; revisit only if bulk repertoire mining is needed.
+Modules C (Chessable export) and E (YouTube reverse search) were always
+deferred and were excised when we cleaned up legacy context. They can be
+revisited later if there's a use case.
 
-## Code Conventions
-
-- Type hints everywhere; no `Any`.
-- Pydantic for all I/O at module boundaries.
-- `ruff` lint, `pytest` tests.
-- Streamlit: `st.session_state`, `st.cache_data`/`st.cache_resource`.
-- stdlib `logging`, no `print()` in `src/`.
-- Secrets in `.env`; `.env.example` shows schema.
-- Conventional commits, feature branches per module.
-
-## Get-Shit-Done 2.0 Hooks
-
-**Per turn:**
-- State module(s) being touched.
-- State smallest testable end-to-end slice.
-- Write code, run it, show output.
-- End with: working / stubbed / next slice.
-
-**Per session:**
-- Read `CLAUDE.md` first.
-- Run previous phase's acceptance before new work.
-- Scope creep → `notebooks/PHASE2_IDEAS.md`.
-
-## Failure Mode Cuts (in order)
-
-1. Module E stub (already deferred).
-2. Chess.com support (Lichess-only).
-3. Position classifier sophistication.
-4. Gemma fine-tune itself (Anthropic stays primary).
-
-**Do not cut:** Module A RAG, Module B diff, Streamlit panels on Lichess.
-
-## Demo Scenario (Phase 10 target)
+## Demo scenario
 
 User pastes a Lichess Catalan game URL where they deviated on move 9.
 
-- Panel 1: "Deviation on move 9. You played Bd2; repertoire plays Qc2."
-- Panel 2: Eval graph showing drop from +0.4 to -0.7 over moves 9–12.
-- Panel 3: Analytical paragraph on the Catalan plan with a book citation.
+- Panel 1: "You deviated on move 9. You played Bd2; repertoire prepares Qc2."
+- Panel 2: cp graph showing drop from +0.4 to −0.7 over moves 9-12.
+- Panel 3: explanation card for that ply citing Watson MCO vol. 1 p. 142.
 
-User clicks move 22 (IQP middlegame). Panel 3 updates with IQP-specific
-explanation citing Watson MCO vol. 1 p. 142.
+User clicks the deviation move in Panel 1's list → Position viewer jumps to
+that ply → Panel 3's card stays consistent.
 
-Build for this exact walkthrough. Nothing else.
+## Code conventions
+
+- Type hints everywhere; no `Any` outside SDK seams.
+- Pydantic for all I/O at module boundaries.
+- `ruff` lint, `pytest` tests.
+- Streamlit: `st.session_state`, `st.cache_data` / `st.cache_resource`.
+- stdlib `logging`; no `print()` in `src/`.
+- Secrets in `.env`; `.env.example` shows schema.
+- Conventional commits, feature branches per slice.
+
+## Running it
+
+Host mode:
+
+```
+uv run uvicorn src.api.main:app --reload      # API on :8000
+uv run streamlit run src/ui/streamlit_app.py  # UI on :8501
+```
+
+Required env (`.env`): `OPENAI_API_KEY`, `LICHESS_USERNAME`,
+`STOCKFISH_PATH`. Optional: `CHESSCOM_USERNAME` if you want Chess.com URLs.
+
+Required filesystem: `data/repertoires/white.pgn` and/or `black.pgn` for
+Panel 1 to do anything; Panels 2-3 work without them.
+
+## Tests
+
+`uv run pytest` — 204 passed, 0 skipped.
+`uv run ruff check src tests` — clean.
+
+Streamlit panels use `streamlit.testing.v1.AppTest`; LLM calls are mocked
+through a fake chat client (no live API hits in CI).

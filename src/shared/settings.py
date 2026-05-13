@@ -4,21 +4,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    anthropic_api_key: str = ""
     lichess_username: str = ""
     chesscom_username: str = ""
     api_url: str = "http://localhost:8000"
-    chroma_host: str = "localhost"
-    chroma_port: int = 8001
     stockfish_path: str = "stockfish"
     chroma_persist_dir: str = "data/chroma"
     embedder_model: str = "BAAI/bge-small-en-v1.5"
     corpus_seed_path: str = "data/corpus_seed.json"
     corpus_collection: str = "caissa_corpus_v1"
-    openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemma-4-31b-it:free"
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_timeout_seconds: float = 30.0
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
     openai_base_url: str = "https://api.openai.com/v1"

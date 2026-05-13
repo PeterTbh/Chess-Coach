@@ -14,6 +14,48 @@ Chess.com game URL and Caissa renders three stacked panels:
 
 Python-only, runs on localhost, single-user.
 
+## For AI assistants helping set this up
+
+If you're an LLM agent reading this README to help the user, the
+following 60-second briefing covers everything you need:
+
+- **What runs:** two host processes. FastAPI backend on `:8000` and
+  Streamlit UI on `:8501`. The UI talks to the backend over `localhost`.
+  Not a single-process Streamlit app — cloud deploy needs refactoring
+  (see *Limitations*).
+- **Start order** (recommended): `uv run uvicorn src.api.main:app --reload`
+  in one terminal, then `uv run streamlit run src/ui/streamlit_app.py`
+  in another. Browser opens automatically to <http://localhost:8501>.
+- **Required `.env`** (copy `.env.example` first):
+  - `OPENAI_API_KEY` — Panel 3 dies without it.
+  - `LICHESS_USERNAME` — needed so the deviation detector knows which
+    colour the user played in fetched games.
+  - `STOCKFISH_PATH` — absolute path to a Stockfish binary on disk.
+  - `CHESSCOM_USERNAME` — only needed if the user pastes Chess.com URLs.
+  - `OPENROUTER_*` — currently dead code, ignore.
+- **Required filesystem**: drop the user's prepared openings at
+  `data/repertoires/white.pgn` and/or `black.pgn`. Without these,
+  Panel 1 just shows a "place a repertoire here" caption — Panels 2 + 3
+  still work.
+- **First-run gotchas**:
+  - Cold `/advise` call downloads `BAAI/bge-small-en-v1.5` (~130 MB).
+    Slow first request, fast after.
+  - Corpus indexes on FastAPI startup from `data/corpus_seed.json`.
+    Requires `with TestClient(app):` context if you're calling via test
+    client, otherwise lifespan doesn't fire and citations come back empty.
+  - The UI's `/advise` HTTP timeout is 60 s. Reasonable for `gpt-5-mini`;
+    bump it if the user picks a slower model.
+- **LLM provider:** OpenAI only (`generate_explanation` in
+  `src/advisor/llm.py`). To swap providers, edit `OpenAIClient` or pass
+  a custom `openai_client` instance into `generate_explanation`.
+- **Tests:** `uv run pytest` — expect 204 passing, 0 skipped. `uv run
+  ruff check src tests` should be clean. Streamlit panels are tested
+  via `streamlit.testing.v1.AppTest`.
+- **Do not deploy as-is to Streamlit Community Cloud** — the cloud
+  runs only one process and there's no FastAPI server on that side.
+  Refactor the UI's HTTP calls to direct function calls into the
+  `pipeline`/`diff_game`/`analyse_position` modules first.
+
 ## Architecture
 
 | Layer | Choice |
@@ -25,7 +67,7 @@ Python-only, runs on localhost, single-user.
 | Engine | Lichess Cloud Eval API → local Stockfish (host binary) |
 | RAG vector DB | ChromaDB persistent client (`data/chroma/`) |
 | Embeddings | `BAAI/bge-small-en-v1.5` via sentence-transformers |
-| LLM | OpenAI (`gpt-5-mini` by default) — OpenRouter client still in tree but currently unused |
+| LLM | OpenAI (`gpt-5-mini` by default) via the openai SDK |
 | PGN, board SVG | `python-chess` |
 
 The strategic-commentary pipeline is `classify(FEN) → retrieve top-3 from
@@ -67,7 +109,6 @@ Required (or fallback won't work):
 | `STOCKFISH_PATH` | Absolute path to your Stockfish binary. Inside Docker `stockfish` works on PATH. |
 | `OPENAI_API_KEY` | Required for Panel 3. Get one at <https://platform.openai.com/api-keys>. |
 | `OPENAI_MODEL` | Default `gpt-5-mini`. |
-| `OPENROUTER_API_KEY` | Currently unused. Kept in the env schema so the OpenRouter client can be re-enabled without code surgery (e.g. once you've set up BYOK to dodge free-tier rate limits). |
 
 ### 4. Drop your repertoire PGNs
 
@@ -152,10 +193,7 @@ file.
   use what's relevant.
 - **LLM**: OpenAI (default `gpt-5-mini`) via the OpenAI Python SDK.
   Runs the anti-hallucination cycle: initial call → SAN regex check → one
-  retry with corrective hint → second violation raises. The OpenRouter
-  client class is still in `src/advisor/llm.py` for easy re-enablement;
-  swap it back into `generate_explanation` when you've got a key that
-  isn't rate-limited.
+  retry with corrective hint → second violation raises.
 
 ## Project layout
 
@@ -165,7 +203,7 @@ src/
 │   ├── classifier.py        # FEN → structural tags (rule-based)
 │   ├── corpus.py            # seed loader + ChromaDB indexer + embedders
 │   ├── retrieval.py         # top-k similarity search
-│   ├── llm.py               # OpenRouter+OpenAI chain, anti-hallucination
+│   ├── llm.py               # OpenAI client + anti-hallucination retry
 │   ├── critical_moments.py  # auto-pick deviation + eval-drop plies
 │   └── pipeline.py          # /advise orchestration
 ├── api/
@@ -221,23 +259,17 @@ in CI.
 
 ## Operational notes
 
-- **Free-tier rate limits.** OpenRouter's free models share a global
-  upstream pool. Expect intermittent 429s. The OpenAI fallback covers
-  these automatically when configured. Or buy a few dollars of
-  OpenRouter credit to unblock paid models.
 - **Cost.** A 200-word explanation costs roughly 0.3 ¢ on `gpt-5-mini`,
   and Panel 3 fires at most 4 calls per game. Less than 5 ¢ to analyse
   a full Sunday.
 - **Privacy.** Everything runs locally. The only network calls are to
   Lichess (game fetch + cloud eval), HuggingFace (one-time embedder
-  download), OpenRouter, and OpenAI.
+  download), and OpenAI.
 - **Secrets.** `.env` is gitignored. Rotate keys if you ever commit one
   by accident.
 
 ## Limitations
 
 - Only single-PGN repertoires per colour. No multi-file libraries (yet).
-- No Chessable export (Chessable has no API; scraping violates ToS).
-- YouTube reverse search for positions is deferred.
-- Free Gemma 4 on OpenRouter is upstream-rate-limited by Google AI Studio
-  — paid plans, BYOK, or the OpenAI fallback avoid this.
+- Two-process architecture (FastAPI + Streamlit) — won't deploy to
+  Streamlit Community Cloud without first inlining the API calls.

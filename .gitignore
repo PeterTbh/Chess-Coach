@@ -1,26 +1,14 @@
 # Caissa — gitignore
 
 # User data (kept local)
-data/raw_pdfs/
-data/extracted/
-data/db/
-data/models/
 data/repertoires/
-
-# Allow .gitkeep markers for empty data dirs
-!data/raw_pdfs/.gitkeep
-!data/repertoires/.gitkeep
-!data/extracted/.gitkeep
-!data/db/.gitkeep
-!data/models/.gitkeep
-
-# Seed corpus is committed so the app works out-of-the-box
-!data/corpus_seed.json
-
-# Local Chroma persistence (auto-built from seed)
 data/chroma/
 
-# File types
+# Allow .gitkeep markers + the committed seed corpus
+!data/repertoires/.gitkeep
+!data/corpus_seed.json
+
+# Generated file types
 *.pdf
 *.sqlite
 *.db
@@ -35,11 +23,6 @@ bin/
 # Secrets
 .env
 .streamlit/secrets.toml
-# Secrets / captures — never commit
-.env
-
-# Scraper is local-only; not published to GitHub
-Scraper/
 
 # Python
 __pycache__/
@@ -52,12 +35,9 @@ __pycache__/
 
 # OS
 .DS_Store
-*.egg-info/
-.venv/
 dist/
 build/
 
 # IDE
-.DS_Store
 .idea/
 .vscode/
